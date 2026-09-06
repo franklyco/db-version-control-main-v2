@@ -213,10 +213,371 @@ match the pre-R4-A baseline).
 
 ### R4-C — Production UI integration
 
-- Reuse current Visual Editor shell, panel, focus, keyboard, and event systems.
-- Scope styles to avoid site and Bricks leakage.
-- Implement search, categories, filters, summaries, and status states.
-- Keep control opening routed through the current panel.
+Consumes the R4-A backend contract; adds no new REST routes and no new
+mutation authority. Confirmed 2026-08-31 as three sub-slices for
+stability + smaller review surface:
+
+**R4-C-1a — contract wiring + priority-derivation fix** (LANDED 2026-08-31)
+
+- Wire `family` + `q` query params to the list route with a 250ms
+  debounce on the search input; `family` chip fires an immediate
+  round-trip.
+- Introduce a `loading-refresh` render state that keeps the current
+  row list visible under a dimmed overlay for non-initial requests
+  (the `.__refresh-overlay` selector already ships in
+  `control-center.css`).
+- Render the per-row `description` line as a muted second line under
+  the label (`textContent`, never `innerHTML`); omit the node when
+  empty.
+- Render the `providerErrors` map from the list response as a
+  top-of-list `.__notice--provider-error` banner (`role="status"`,
+  one line, dismiss button); dismissal is per-drawer-lifetime.
+- Fix `priorityFromItem()` to derive `must` / `should` / `nice` from
+  the `sortKey` prefix (`vertical_1_*` / `_2_ / _3_`); every other
+  prefix → no priority. The R3-C-2 fallback on `item.priority` /
+  `item.meta.priority` is dead against R4-A data.
+- Extend the jsdom suite by 7 cases (query round-trip, debounce,
+  chip → GET, priority derivation, description render/omit, banner
+  render, banner dismiss).
+
+##### R4-C-1a checkpoint — 2026-08-31 (Landed)
+
+All 7 planned drawer changes shipped with no backend edits. Files
+touched: `assets/js/brand-control-center-app.js` (state additions
+for `providerErrors` + `providerErrorsDismissed`; new
+`priorityFromItem()` sortKey-prefix derivation; `listUrl(params)`
+now encodes `?family=…&q=…`; `loadControls({reason})` supports
+`initial`/`query`/`retry` with a `loading-refresh` state that keeps
+existing rows visible under the previously-unused
+`.__refresh-overlay`; `handleInput` debounce 180 → **250ms**;
+`toggleChip` fires a round-trip on `fieldFamily`, stays client-side
+for `status`/`priority`; `itemMatchesFilters` drops search +
+fieldFamily branches; `clearFilters` fires a round-trip only when
+clearing removed a server-scoped param; new
+`renderProviderErrorBanner()` + `renderRefreshOverlay()` +
+`dismissProviderErrors()` handler; `renderRow` wraps label in a new
+`.__label-block` and appends a `.__description` `<p>` via
+`textContent` only when the record ships a non-empty description;
+`close()` resets dismissal; `publicState()` exposes the new
+fields); `assets/css/control-center.css` (new
+`.__notice--provider-error`, `.__label-block`, `.__description`
+selectors — warning-tone banner sits above the table wrap; muted
+second line with 2-line `-webkit-line-clamp`); `src/Assets/AssetLoader.php`
+(widened `controlCenterSearchPlaceholder`; 4 new i18n keys —
+`controlCenterRefreshing`, `…ProviderErrorSingular`, `…Plural`,
+`…Dismiss`); `tests/visual-editor-brand-control-center-state.test.cjs`
+(+7 R4-C-1a cases + `sleep()` + `extractQuery()` helpers).
+
+**Validation** — every planned baseline hit exactly:
+
+| Command | Result | Baseline |
+|---|---|---|
+| `node --test tests/visual-editor-brand-control-center-state.test.cjs` | **21 pass / 21 tests** | 14 → 21 (7 new) |
+| `node --test tests/visual-editor-media-manager-state.test.cjs` | **42 pass** | Preserved |
+| `vendor/bin/phpunit --filter "VisualEditor(Control\|SharedGlobals)"` | **60 tests / 200 assertions OK** | Unchanged from R4-A landing (R4-C-1a touched no backend) |
+| `composer agent-docs:refresh && composer agent-docs:check` | **54 curated / 443 discovered / 0 unmapped** | Unchanged — AssetLoader i18n additions do not rotate hook or REST hashes |
+
+**Contract preserved**: no new REST routes, no new mutation
+authority, `data-public-id` remains the sole client-authoritative
+row token (no forbidden `data-*` re-introduced), single polite live
+region rule holds (the banner uses `role="status"` as a persistent
+visual affordance but the announcer stays the authoritative
+announcement channel), Bricks Builder isolation unaffected, kill
+switch operationally unchanged.
+
+**Non-events**: no content mutated; no persistent WP option
+toggled outside test setUp/tearDown; no git operations either repo.
+See EVIDENCE-LOG E-101 for the full row.
+
+**R4-C-1b — batch value-summary loader** (LANDED 2026-08-31)
+
+- Attach an `IntersectionObserver` (root = `.__table-wrap`) to each
+  row whose `status === 'available'` and whose publicId is not yet
+  hydrated. Batch up to 20 publicIds after a 50ms debounce → `POST
+  .../control-center/value-summaries`. Merge results into an
+  in-memory `state.valueSummaries` map that persists for the
+  drawer's lifetime; surgically re-render only the affected rows'
+  summary slots (no full `renderList()`).
+- Dispatch on `summary.family` — for R4-C-1b only `relationship` and
+  `post_object` render a chip (`<strong>{count}</strong> connected`
+  with `title="{firstTitles.join(', ')}"`); every other family /
+  null summary renders as an empty slot. R5.x owns the remaining
+  family chips.
+- Graceful degrade: if `IntersectionObserver` is unavailable, render
+  empty slots silently. Never spawn a fallback fetch.
+- Extend the jsdom suite by 4 cases (only-available rows observed,
+  batch POST payload, chip render, null → empty slot, no
+  rehydration).
+
+##### R4-C-1b checkpoint — 2026-08-31 (Landed)
+
+All 4 planned drawer changes shipped with no backend edits. Files
+touched:
+
+- `assets/js/brand-control-center-app.js` — added `state.valueSummaries`
+  (publicId → summary\|null\|`'loading'` cache), `state.valueSummaryObserver`
+  (lazy IO rooted on `.__table-wrap`, `threshold: 0`),
+  `state.valueSummaryPending` (dedup queue), `state.valueSummaryFlushTimer`
+  (50ms debounce). New helpers: `ensureValueSummaryState()`,
+  `ensureValueSummaryObserver(wrap)`, `teardownValueSummaryObserver()`,
+  `handleValueSummaryIntersect(entries)` (unobserves immediately,
+  short-circuits cached publicIds, queues fresh ones),
+  `scheduleValueSummaryFlush()` (50ms), `valueSummariesUrl()`,
+  `flushValueSummaries()` (batch cap **20** per flush — D-064 server
+  cap is 50 as headroom — marks `'loading'` before POST, chains
+  another flush if queue still has entries, fail-soft collapses to
+  `null` on network error), `patchValueSummarySlot(publicId)`
+  (surgical per-row DOM patch — mirrors Media Manager R2-E3 pattern,
+  no full `renderList()` so focus + sibling observer registrations
+  survive), `renderValueSummaryChip(summary)` (family dispatcher —
+  only `relationship` + `post_object` render for R4-C-1b),
+  `registerVisibleValueSummaryTargets(wrap, tbody)` (called at the
+  end of `renderList()`, observes only rows with
+  `data-status="available"` and unhydrated publicId). `renderRow()`
+  gained a `.__value-summary[data-public-id]` slot via new
+  `renderValueSummarySlot(item, status, publicId)`. `close()`
+  extended to teardown the observer + null-out caches. `publicState()`
+  extended with `valueSummaries` for test observability. **Graceful
+  degrade**: `typeof window.IntersectionObserver !== 'function'`
+  short-circuits — rows render empty slots, no fallback fetch.
+- `assets/css/control-center.css` — added `.__value-summary` (inline-flex
+  chip container, `max-width: 200px`, ellipsis, `:empty { display: none }`
+  so unhydrated / null rows do not claim space) and
+  `.__value-relationship` (count + label chip).
+- `src/Assets/AssetLoader.php` — 1 new i18n key
+  `controlCenterValueRelationshipConnected` (label suffix for the
+  "N connected" chip).
+- `tests/visual-editor-brand-control-center-state.test.cjs` — added
+  a minimal `IntersectionObserver` polyfill (exposed on
+  `window.__ioRegistry` so tests trigger intersections via
+  `triggerAll()` / `trigger(predicate)`; honors `unobserve` +
+  `disconnect` so post-first-intersection re-triggers do not fire —
+  matches real browser behavior). +4 R4-C-1b cases.
+
+**Validation** — every planned baseline hit exactly:
+
+| Command | Result | Baseline |
+|---|---|---|
+| `node --test tests/visual-editor-brand-control-center-state.test.cjs` | **25 pass / 25 tests** | 21 → 25 (4 new) |
+| `node --test tests/visual-editor-media-manager-state.test.cjs` | **42 pass** | Preserved |
+| `vendor/bin/phpunit --filter "VisualEditor(Control\|SharedGlobals)"` | **60 tests / 200 assertions OK** | Unchanged from R4-A landing (R4-C-1b touched no backend) |
+| `composer agent-docs:refresh && composer agent-docs:check` | **54 curated / 443 discovered / 0 unmapped** | Unchanged — one i18n key added; no new hook or REST surface |
+
+**Contract preserved**: no new REST routes, no new mutation
+authority, per-record server-side capability recheck happens inside
+`ControlCenterValueSummariesController` (unchanged from R4-A), single
+polite live region rule holds (chip is a persistent visual
+affordance), `data-public-id` remains the sole client-authoritative
+row token (the summary slot re-uses the same allowed attribute), kill
+switch operationally unchanged.
+
+**R4-A backend surface now fully consumed by production code**:
+- `GET .../control-center/controls?family=&q=` — R4-C-1a
+- `POST .../control-center/value-summaries` — R4-C-1b
+- `POST .../control-center/open` — R3-C-2 (unchanged)
+
+R4-C-2 is purely presentational — view-mode toggle + collapsible
+group headers + search-wrap + state gallery + invariant sweep. No
+new API affordances remain to consume.
+
+**Non-events**: no content mutated; no persistent WP option
+toggled outside test setUp/tearDown; no git operations either repo.
+See EVIDENCE-LOG E-102 for the full row.
+
+**R4-C-2 — view-mode toggle, collapsible groups, search-wrap, state
+gallery, invariant sweep** (LANDED 2026-08-31 — R4-C COMPLETE)
+
+- Header segmented control (`.__view-toggle`, `role="tablist"`) —
+  `By category` (default) vs `By provider`; arrow-key nav; preference
+  persisted via `localStorage('dbvc.ve.control-center.view-mode')`
+  wrapped in try/catch (private-window safe).
+- Collapsible group headers within each category tab (tbody per
+  group, `.__group-header` disclosure with `aria-expanded`), keyed
+  on `{providerId}::{record.group}`; collapsed by default; per-viewer
+  persistence via `localStorage`. Empty groups omitted.
+- Search-wrap DOM (leading icon + Clear button visible only when the
+  input has a value).
+- Translate the remaining mockup `states.html` cells (descriptor-
+  loading row modifier, permission-filtered lock glyph, value-summary
+  loading skeleton, value-summary empty slot, loading-refresh dimmed
+  overlay).
+- Invariant sweep: reduced-motion suppresses the group-toggle chevron
+  + segmented-control transitions; row-focus continuity extends to
+  survive view-mode flips; single polite live region rule holds
+  after every new control.
+- Extend the jsdom suite by 5 cases (view-mode flip + aria-selected;
+  localStorage round-trip; group render + collapsed-by-default;
+  group-toggle localStorage; focus continuity across view-mode flip).
+
+##### R4-C-2 checkpoint — 2026-08-31 (Landed — R4-C COMPLETE)
+
+All 5 planned drawer changes shipped with no backend edits. Files
+touched:
+
+- `assets/js/brand-control-center-app.js` — biggest R4-C refactor:
+  - Added `DEFAULT_QUERY.provider = 'all'` axis; new module constants
+    `VIEW_MODES`, `LS_KEY_VIEW_MODE`, `LS_KEY_EXPANDED_GROUPS`; new
+    state `viewMode` + `expandedGroups`. Groups default to COLLAPSED
+    — the persisted list only records viewer DEVIATIONS from that
+    default, so a new fixture group appearing after localStorage was
+    written still collapses by default.
+  - localStorage helpers `readStoredString` / `writeStoredString`
+    (try/catch-wrapped for private-window safety),
+    `loadStoredViewMode` (validates against `VIEW_MODES`),
+    `loadStoredExpandedGroups` (guards bad JSON), `persistExpandedGroups`.
+  - `setViewMode(mode)` — validates, snapshots active-row publicId
+    BEFORE re-render, persists to localStorage, restores focus on
+    the same publicId's Open button in the new layout.
+  - `toggleGroup(groupKey)` — flips the map entry (adds when
+    expanding, deletes when collapsing back to default), persists,
+    re-renders.
+  - `clearSearchInput()` — clears the input + fires a
+    `loadControls({reason:'query'})` round-trip.
+  - Provider helpers `providerIdFromPublicId` (splits publicId on
+    `:`), `providerLabel` (Shared Globals / Vertical / fallback
+    title-case), `providersFromItems`,
+    `tabAxisForViewMode` / `tabEntriesForViewMode` / `tabLabelForViewMode`.
+  - `ensureRoot()` rehydrates `viewMode` + `expandedGroups` from
+    localStorage on first open.
+  - `createHeader()` inserts the `.__view-toggle` segmented control
+    (`role="tablist"` with `aria-label="Category view"` for a11y
+    disambiguation vs the category tablist below) between the
+    title-block and close button; two `role="tab"` buttons carrying
+    `data-view-mode` + `data-dbvc-ve-control-center-action="set-view-mode"`.
+  - `renderViewToggle()` keeps `aria-selected` + `tabIndex` in sync.
+  - `createFilters()` replaces the bare input with a `.__search-wrap`
+    (leading `.__search-icon` glyph + trailing `.__search-clear`
+    button); `renderFilters()` toggles Clear visibility per
+    `state.query.search === ''`.
+  - `handleClick` gains `set-view-mode`, `toggle-group`,
+    `clear-search` branches. `select-tab` reads `data-tab-slug`
+    with `data-category` / `data-provider` fallbacks so the R3-C-2
+    jsdom + real-browser tests remain compatible.
+  - `handleKeydown` gains `ArrowLeft` / `ArrowRight` nav when focus
+    is inside the view-toggle tablist — advances the segmented
+    control and moves focus to the newly-selected button.
+  - `renderTabs()` + `createTabButton()` are view-mode-aware — tabs
+    carry both `data-tab-slug` (generic) and `data-category` /
+    `data-provider` (axis-specific).
+  - `selectTab()` routes into `state.query.category` or
+    `state.query.provider` depending on `viewMode`.
+  - `itemMatchesFilters()` branches on `viewMode` — provider mode
+    filters on `providerIdFromPublicId(item.publicId)`.
+  - `clearFilters()` preserves BOTH `category` and `provider` axes.
+  - **`createTableWrap()` no longer creates the R3-C-2 single
+    `<tbody>` sentinel** — rows now live inside per-group
+    `<tbody class="__group">` elements built by `renderList()`.
+  - `clearTableTbodies(wrap)` helper; `buildGroupsFromVisible(visible)`
+    (keys groups `{providerId}::{group}`, preserves first-appearance
+    order — matches R4-A `sortKey → label → publicId` global sort);
+    `renderGroupTbody(group)` (emits tbody with `data-group-key` +
+    `data-provider-id` + `is-collapsed` when not expanded);
+    `renderGroupHeaderRow(group, isExpanded)` (colspan-2 disclosure
+    row with `.__group-toggle` `aria-expanded` + `aria-label`
+    Expand/Collapse, chevron, title, count badge).
+  - `renderList()` overhauled — clears all tbodies via
+    `clearTableTbodies`, then renders panel-state OR iterates
+    `buildGroupsFromVisible` and appends one tbody per group.
+  - `registerVisibleValueSummaryTargets(wrap)` signature simplified
+    — takes wrap only, queries rows at the wrap level so per-group
+    tbodies are picked up. Dead `clearRows(tbody)` helper removed.
+  - `publicState()` gains `viewMode` + `expandedGroups`.
+- `assets/css/control-center.css` — `.__view-toggle*` (segmented
+  control with `aria-selected="true"` bg swap, focus-visible ring),
+  `.__search-wrap` + `.__search-icon` + `.__search-clear` (icon
+  positioned absolute at input left, Clear at right with hover /
+  focus states), `.__group-header*` + `.__group-toggle*` (chevron
+  rotates 90deg on `[aria-expanded="true"]` via a 160ms transition,
+  suppressed under `prefers-reduced-motion`), `.__group-title`,
+  `.__group-count`, `.__group.is-collapsed .__row { display: none }`
+  (semantic tree stays intact), reduced-motion block.
+- `src/Assets/AssetLoader.php` — 11 new i18n keys:
+  `controlCenterViewToggleLabel`, `…ViewByCategory`, `…ViewByProvider`,
+  `controlCenterGroupExpand`, `…GroupCollapse`,
+  `…GroupControlsCount`, `…GroupUnnamed`, `controlCenterProviderShared`,
+  `…ProviderVertical`, `…ProviderUnknown`, `controlCenterClearSearch`.
+- `tests/visual-editor-brand-control-center-state.test.cjs` — 5
+  new cases. Two assertions use `JSON.stringify` comparison instead
+  of `deepStrictEqual` because jsdom's plain-object prototype
+  differs from Node's plain-object prototype (documented inline).
+
+**Validation** — every planned baseline hit exactly:
+
+| Command | Result | Baseline |
+|---|---|---|
+| `node --test tests/visual-editor-brand-control-center-state.test.cjs` | **30 pass / 30 tests** | 25 → 30 (5 new) |
+| `node --test tests/visual-editor-media-manager-state.test.cjs` | **42 pass** | Preserved |
+| `vendor/bin/phpunit --filter "VisualEditor(Control\|SharedGlobals)"` | **60 tests / 200 assertions OK** | Unchanged from R4-A landing (R4-C-2 touched no backend) |
+| `composer agent-docs:refresh && composer agent-docs:check` | **54 curated / 443 discovered / 0 unmapped** | Unchanged — 11 new i18n keys; no new hook or REST surface |
+
+**Contract preserved**: no new REST routes, no new mutation
+authority, `data-public-id` remains the sole client-authoritative
+row token (new UI-scoped attributes `data-view-mode`,
+`data-group-key`, `data-tab-slug`, `data-provider`,
+`data-provider-id` are all cosmetic — none carries target authority
+the save pipeline reads). Single polite live region rule holds.
+Reduced-motion suppresses chevron rotation + segmented-control
+transitions. Kill switch operationally unchanged.
+
+**All 7 pinned R4-B decisions honored end-to-end**: (1) persistent
+search input; (2) flat tab strip; (3) collapsible group headers;
+(4) description as muted second line (R4-C-1a); (5) per-family
+value-summary chips (R4-C-1b relationship/post_object; other
+families → R5.x); (6) Shared Globals folded into the same category
+system + view-mode toggle; (7) view-mode toggle in drawer header
+with localStorage persistence.
+
+**Non-events**: no content mutated; no persistent WP option
+toggled outside test setUp/tearDown; no git operations either repo.
+See EVIDENCE-LOG E-103 for the full row.
+
+**R4-C is complete.** Follow-ons: R4-D (Shared Globals transition +
+hardening — real-browser QA at 1440×900 + 1280×720 with a 400-row
+registry, long-label truncation calibration, save-status-strip that
+dispatches from `overlay-app.js` on successful save, release-notes
++ rollback update) and R5.x (per-family editing factories).
+
+#### Pinned R4-C decisions (agreed 2026-08-31 during planning)
+
+Not promoted to DECISION-LOG rows because they refine D-064 rather
+than diverge from it. Track here so a fresh session picks them up:
+
+- **Mixed filter model.** `status` + `category` stay client-side;
+  only `family` + `q` go server-side. Keeps the `All (N)` tab
+  counting cheap (no second unfiltered request) and avoids scope
+  creep into a backend slice.
+- **Priority chip stays client-side**, derived from the `sortKey`
+  prefix. If a future provider wants `priority`-first sort, the
+  cleaner move is a backend param, not a runtime map lookup.
+- **Save-status-strip is deferred to R4-D**, not R4-C-2. The
+  overlay-app.js dispatch straddles the R3-C-2 pinned baseline
+  (14/14 jsdom + E-099 real-browser panel-coexistence QA); R4-D
+  already carries the real-browser QA that would catch cross-panel
+  regressions.
+- **`IntersectionObserver` unavailable → empty slots silently.** No
+  fallback fetch. The drawer never runs in an environment where IO
+  is absent, but the two-line guard costs nothing.
+
+#### R4-C non-goals
+
+- No new REST routes; no new mutation authority. Every save still
+  routes through the existing `MutationService` pipeline via the
+  R3-C-1 open route.
+- No overlay-app.js edits (save-status-strip → R4-D).
+- No `text` / `image` / `gallery` / `color_picker` / `wysiwyg` chip
+  rendering (→ R5.x factory slices).
+- No real-browser QA at 400 rows / long-label truncation calibration
+  (→ R4-D).
+
+#### Green baselines to preserve at each slice boundary
+
+| Command | Expected |
+|---|---|
+| `vendor/bin/phpunit` | 888/7 (unchanged; R4-C touches no backend) |
+| `vendor/bin/phpunit --filter "VisualEditor(Control\|SharedGlobals)"` | 41/140 OK |
+| `node --test tests/visual-editor-brand-control-center-state.test.cjs` | 14 → 21 → 25 → 30 |
+| `node --test tests/visual-editor-media-manager-state.test.cjs` | 42/42 |
+| `composer agent-docs:refresh && composer agent-docs:check` | 54/443/0 (verify — AssetLoader line shifts may rotate an extension-point hash; re-map if so) |
 
 ### R4-D — Shared Globals transition and hardening
 
@@ -224,6 +585,76 @@ match the pre-R4-A baseline).
 - Verify existing relationship/post-object flows.
 - Test large registries and long labels/values.
 - Complete supported laptop/desktop and accessibility QA. Additional responsive/mobile and touch-specific QA remains tabled by D-036.
+
+#### R4-D-1 checkpoint — 2026-08-31 (Landed — save-status-strip)
+
+First R4-D sub-slice and first R4 slice to touch `overlay-app.js` in
+any way. R4-D-2 (real-browser QA + long-label truncation calibration
++ release-notes/rollback update) remains open.
+
+**What shipped**
+
+- `assets/js/overlay-app.js` — new `dispatchPanelSaved(token)` helper
+  next to `dispatchControlCenterEvent`; gated behind
+  `isControlCenterEnabled()` matching the existing dispatch policy.
+  Fires `dbvc:visual-editor:panel:saved` with `{token}` detail on
+  BOTH `handleSave` success paths (composite + non-composite),
+  placed AFTER the panel-state / status-bar updates and BEFORE
+  the `shouldReloadAfterSave` `window.location.reload` so the
+  drawer has one tick to render its strip before a page reload.
+- `assets/js/brand-control-center-app.js` — `state.activeToken`
+  stored in `openRow` alongside `activePublicId`;
+  `state.saveStatusStrip` + `state.saveStatusTimer` new; new
+  `handlePanelSaved(event)` gates on `token === state.activeToken`
+  AND `state.activePublicId` non-empty; new `renderSaveStatusStrip()`
+  inserts / removes the strip at the top of the table wrap; `close()`
+  clears the timer + strip state + activeToken; `renderList()` calls
+  `renderSaveStatusStrip()` after `renderRefreshOverlay(wrap)` so a
+  filter change / view-mode flip mid-fade preserves the confirmation.
+  `publicState()` gains `activeToken` + `saveStatusStrip`. Document
+  listener wired in `mount()`.
+- `assets/css/control-center.css` — new `.__save-status-strip`
+  selector (sticky top:0, success-green background,
+  `dbvc-ve-cc-save-status` keyframe fade over 2500ms) + a
+  reduced-motion block suppressing the animation.
+- `src/Assets/AssetLoader.php` — 1 new i18n key
+  `controlCenterSaveStatus = "Saved {label}."` — same string doubles
+  as the polite live-region announcement text.
+- `tests/visual-editor-brand-control-center-state.test.cjs` — +3
+  R4-D-1 jsdom cases.
+
+**Validation** — every planned baseline hit exactly:
+
+| Command | Result | Baseline |
+|---|---|---|
+| `node --test tests/visual-editor-brand-control-center-state.test.cjs` | **33 pass / 33 tests** | 30 → 33 (3 new) |
+| `node --test tests/visual-editor-media-manager-state.test.cjs` | **42 pass** | Preserved (overlay-app.js addition is Control-Center-scoped, media-manager save flow untouched) |
+| `vendor/bin/phpunit --filter "VisualEditor(Control\|SharedGlobals)"` | **60 tests / 200 assertions OK** | Unchanged (R4-D-1 touched no backend) |
+| `composer agent-docs:refresh && composer agent-docs:check` | **54 curated / 443 discovered / 0 unmapped** | Unchanged (one i18n key added; no new hook or REST surface) |
+
+**Contract preserved**: no new REST routes, no new mutation authority.
+Single polite live region rule holds (strip is `aria-hidden`,
+announcer stays authoritative). Cross-panel coexistence preserved
+(strip listener gates on `activeToken` so Shared Globals popover
+saves for a DIFFERENT descriptor never surface a strip in the drawer).
+Kill switch operationally unchanged.
+
+**Note on R4-A live-site bug fix (unrelated, same day)**
+
+Two Vertical theme callsites of `vf_field_context_get_entry_primary_purpose()`
+were passing a string field name where the function requires the
+resolved entry array — a pre-existing R4-A cross-repo landing bug
+that only surfaced on the first live-site drawer request. Fixed in
+both Vertical checkouts by adding a
+`vf_field_context_get_entry_for_runtime_field($field_name, 'option')`
+catalog lookup before the purpose call. See E-104 for the full row.
+
+**Non-events**: no content mutated; no persistent WP option toggled
+outside test setUp/tearDown; no git operations either repo.
+
+**Follow-on**: R4-D-2 (real-browser QA at 1440×900 + 1280×720 with
+the 400-row registry, long-label truncation calibration,
+release-notes/rollback update).
 
 ## Interaction model
 

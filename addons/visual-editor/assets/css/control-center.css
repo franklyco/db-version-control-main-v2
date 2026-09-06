@@ -564,6 +564,426 @@
   cursor: pointer;
 }
 
+/* R4-C-1a: provider-error banner sits above the table wrap so a partial
+   list stays scannable underneath. Warning tone (not error) — the list is
+   still usable. */
+.dbvc-ve-control-center__notice--provider-error {
+  margin: 8px var(--dbvc-ve-control-center-section-padding-x);
+  padding: 8px 10px;
+  border-radius: var(--dbvc-ve-border-radius--s);
+  background: var(--dbvc-ve-color-warning-bg);
+  border: 1px solid var(--dbvc-ve-color-warning-border);
+  color: var(--dbvc-ve-color-warning-strong);
+  font-size: var(--dbvc-ve-font--caption);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+/* R4-C-1a: description as a muted second line under the label. Only
+   rendered when the record carries one — layout does not reserve space.
+   `.__label-block` stacks the label + description under the status dot. */
+.dbvc-ve-control-center__label-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__description {
+  margin: 0;
+  font-size: var(--dbvc-ve-font--meta);
+  color: var(--dbvc-ve-color-text-muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* R4-C-1b: value-summary chip sits in the action cell before the Open
+   button. Populated lazily by IntersectionObserver → batch POST. Empty
+   slot renders no chip. Only relationship / post_object surfaces in
+   R4-C-1b; other families / null render nothing. */
+.dbvc-ve-control-center__value-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  padding: 2px 6px;
+  border-radius: var(--dbvc-ve-border-radius--s);
+  background: color-mix(in srgb, var(--dbvc-ve-color-light) 65%, #ffffff);
+  color: var(--dbvc-ve-color-text-muted);
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--bold);
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Empty slot collapses out of the flow so unhydrated / null rows do not
+   claim visual space next to the Open button. */
+.dbvc-ve-control-center__value-summary:empty {
+  display: none;
+}
+
+.dbvc-ve-control-center__value-relationship {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dbvc-ve-color-secondary);
+}
+
+.dbvc-ve-control-center__value-relationship strong {
+  font-weight: var(--dbvc-ve-font-weight--heavy);
+}
+
+/* R5.1-a: text-family chip — preview text (server-truncated at 32 chars)
+   + optional truncation suffix showing the original char count. The
+   parent .__value-summary already caps at max-width:200px and ellipses,
+   so oversized previews compress gracefully at the row edge. */
+.dbvc-ve-control-center__value-text {
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-text-count {
+  color: var(--dbvc-ve-color-text-subtle);
+  font-weight: var(--dbvc-ve-font-weight--normal);
+  margin-left: 4px;
+  flex: 0 0 auto;
+}
+
+/* R5.2-a: choice + link chips mirror the text chip's compact one-line
+   layout. Choice for single/multi-select; link with a trailing external
+   glyph. The parent .__value-summary caps at 200px + ellipses. */
+.dbvc-ve-control-center__value-choice {
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-choice strong {
+  font-weight: var(--dbvc-ve-font-weight--heavy);
+  margin-right: 4px;
+}
+
+.dbvc-ve-control-center__value-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-link-glyph {
+  color: var(--dbvc-ve-color-text-subtle);
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+/* R5.2-b: wysiwyg chip — stripped-text preview + subtle word-count
+   suffix. Same one-line ellipsis pattern. */
+.dbvc-ve-control-center__value-wysiwyg {
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-wysiwyg-words {
+  color: var(--dbvc-ve-color-text-subtle);
+  font-weight: var(--dbvc-ve-font-weight--normal);
+  margin-left: 4px;
+  flex: 0 0 auto;
+}
+
+/* R5.3: image chip — 24×24 rounded thumbnail (loading=lazy) + filename.
+   Parent .__value-summary handles overflow / ellipses. */
+.dbvc-ve-control-center__value-image {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-image img {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+  display: block;
+  background: color-mix(in srgb, var(--dbvc-ve-color-secondary) 12%, #ffffff);
+  flex: 0 0 auto;
+}
+
+.dbvc-ve-control-center__value-image-filename {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* R5.2+color_picker: color chip — 12×12 rounded swatch + monospace hex
+   label. Swatch bg is set via JS style.setProperty on server-validated
+   hex values only. */
+.dbvc-ve-control-center__value-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.dbvc-ve-control-center__value-color-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--dbvc-ve-color-border);
+  flex: 0 0 auto;
+  background-color: transparent;
+}
+
+.dbvc-ve-control-center__value-color-hex {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* true_false: boolean chip — on/off pill. `is-on` variant lights up with
+   a success tone so the state is scannable at a glance. */
+.dbvc-ve-control-center__value-boolean {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  min-height: 20px;
+  border-radius: var(--dbvc-ve-border-radius--l);
+  background: color-mix(in srgb, var(--dbvc-ve-color-text-subtle) 22%, #ffffff);
+  color: var(--dbvc-ve-color-text-muted);
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--heavy);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dbvc-ve-control-center__value-boolean.is-on {
+  background: color-mix(in srgb, var(--dbvc-ve-color-success) 22%, #ffffff);
+  color: var(--dbvc-ve-color-success);
+}
+
+/* R4-C-2: header segmented view-mode toggle. Two role="tab" buttons
+   (By category / By provider) with `aria-selected` reflecting state. */
+.dbvc-ve-control-center__view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--dbvc-ve-border-radius--l);
+  background: color-mix(in srgb, var(--dbvc-ve-color-light) 62%, #ffffff);
+  border: 1px solid var(--dbvc-ve-color-border-muted);
+}
+
+.dbvc-ve-control-center__view-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--dbvc-ve-border-radius--l);
+  color: var(--dbvc-ve-color-text-muted);
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--bold);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.dbvc-ve-control-center__view-toggle-option[aria-selected="true"] {
+  background: var(--dbvc-ve-color-surface);
+  color: var(--dbvc-ve-color-secondary);
+  box-shadow: 0 1px 0 rgba(0, 10, 54, 0.06);
+}
+
+.dbvc-ve-control-center__view-toggle-option:focus-visible {
+  outline: var(--dbvc-ve-control-center-focus-ring);
+  outline-offset: 1px;
+}
+
+/* R4-C-2: search input in the filter strip gets a leading glyph and a
+   trailing Clear button that toggles visibility per input value. */
+.dbvc-ve-control-center__search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.dbvc-ve-control-center__search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--dbvc-ve-color-text-subtle);
+  pointer-events: none;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.dbvc-ve-control-center__search-wrap .dbvc-ve-control-center__search {
+  padding-left: 28px;
+  padding-right: 30px;
+}
+
+.dbvc-ve-control-center__search-clear {
+  position: absolute;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dbvc-ve-border-radius--s);
+  background: transparent;
+  color: var(--dbvc-ve-color-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dbvc-ve-control-center__search-clear:hover,
+.dbvc-ve-control-center__search-clear:focus-visible {
+  color: var(--dbvc-ve-color-secondary);
+  background: var(--dbvc-ve-color-light);
+  outline: none;
+}
+
+/* R4-C-2: collapsible group headers. One `<tbody class="__group">` per
+   `{providerId}::{group}` key. Collapsed groups hide their child rows
+   via a display:none rule on the tbody's is-collapsed modifier — the
+   semantic tree stays intact for assistive tech (rows are still
+   present, just not painted). */
+.dbvc-ve-control-center__group + .dbvc-ve-control-center__group {
+  border-top: 1px solid var(--dbvc-ve-color-border-muted);
+}
+
+.dbvc-ve-control-center__group-header {
+  background: color-mix(in srgb, var(--dbvc-ve-color-light) 52%, #ffffff);
+}
+
+.dbvc-ve-control-center__group-header-cell {
+  padding: 0;
+}
+
+.dbvc-ve-control-center__group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px var(--dbvc-ve-control-center-section-padding-x);
+  background: transparent;
+  border: 0;
+  color: var(--dbvc-ve-color-secondary);
+  font-size: var(--dbvc-ve-font--caption);
+  font-weight: var(--dbvc-ve-font-weight--bold);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbvc-ve-control-center__group-toggle:hover,
+.dbvc-ve-control-center__group-toggle:focus-visible {
+  background: color-mix(in srgb, var(--dbvc-ve-color-light) 78%, #ffffff);
+  outline: none;
+}
+
+.dbvc-ve-control-center__group-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--dbvc-ve-color-text-muted);
+  transform: rotate(0deg);
+  transition: transform 160ms ease;
+}
+
+.dbvc-ve-control-center__group-toggle[aria-expanded="true"]
+  .dbvc-ve-control-center__group-toggle-icon {
+  transform: rotate(90deg);
+}
+
+.dbvc-ve-control-center__group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dbvc-ve-control-center__group-count {
+  color: var(--dbvc-ve-color-text-subtle);
+  font-weight: var(--dbvc-ve-font-weight--normal);
+  font-size: var(--dbvc-ve-font--meta);
+}
+
+.dbvc-ve-control-center__group.is-collapsed
+  .dbvc-ve-control-center__row {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbvc-ve-control-center__group-toggle-icon,
+  .dbvc-ve-control-center__view-toggle-option {
+    transition: none;
+  }
+}
+
+/* R4-D-1: transient confirmation strip shown briefly after the editor
+   panel finishes a save for the row the drawer opened. Sticky top of
+   the table wrap so it stays visible as rows scroll. The strip is
+   aria-hidden — the single polite live region already announced the
+   save. */
+.dbvc-ve-control-center__save-status-strip {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px var(--dbvc-ve-control-center-section-padding-x);
+  background: var(--dbvc-ve-color-success-bg);
+  border-bottom: 1px solid rgba(15, 118, 110, 0.28);
+  color: var(--dbvc-ve-color-success);
+  font-size: var(--dbvc-ve-font--caption);
+  font-weight: var(--dbvc-ve-font-weight--bold);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: dbvc-ve-cc-save-status 2500ms ease forwards;
+}
+
+@keyframes dbvc-ve-cc-save-status {
+  0% { opacity: 0; transform: translateY(-4px); }
+  8% { opacity: 1; transform: translateY(0); }
+  80% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbvc-ve-control-center__save-status-strip {
+    animation: none;
+  }
+}
+
 /* Full-panel states ------------------------------------------------------- */
 
 .dbvc-ve-control-center__panel-state {

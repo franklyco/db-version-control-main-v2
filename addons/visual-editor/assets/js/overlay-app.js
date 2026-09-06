@@ -2721,6 +2721,34 @@
 	}
 
 	/**
+	 * R4-D-1 — panel-saved signal for the Brand Control Center drawer's
+	 * save-status-strip.
+	 *
+	 * Fires on every successful save from the editor panel (both composite
+	 * and non-composite paths). The Control Center drawer's listener gates
+	 * on `state.activeToken === detail.token` so saves for descriptors the
+	 * drawer did not open are ignored downstream — no need to duplicate
+	 * that gate here. Kept behind the Control Center enable check so the
+	 * event never fires at all when the feature is off, matching the
+	 * existing dispatchControlCenterEvent policy.
+	 *
+	 * @param {string} token Descriptor token that was just saved.
+	 */
+	function dispatchPanelSaved( token ) {
+		if ( ! isControlCenterEnabled() ) {
+			return;
+		}
+		if ( typeof token !== 'string' || ! token ) {
+			return;
+		}
+		document.dispatchEvent(
+			new CustomEvent( 'dbvc:visual-editor:panel:saved', {
+				detail: { token },
+			} )
+		);
+	}
+
+	/**
 	 * R3-C-2 — Control Center → Editor Panel bridge.
 	 *
 	 * The Brand Control Center drawer lives in a separate frontend module and
@@ -7715,6 +7743,68 @@
 		};
 	}
 
+	// true_false: checkbox controller for ACF boolean fields.
+	// Reads back as `1` (checked) / `0` (unchecked) — matches ACF's
+	// canonical storage format and the AcfTrueFalseResolver sanitize path.
+	function createBooleanController( value ) {
+		const wrapper = document.createElement( 'label' );
+		wrapper.className = 'dbvc-ve-panel__boolean';
+		const checkbox = document.createElement( 'input' );
+		checkbox.type = 'checkbox';
+		checkbox.id = 'dbvc-ve-panel-input';
+		checkbox.className = 'dbvc-ve-panel__boolean-input';
+		const initial = coerceBooleanValue( value );
+		checkbox.checked = initial;
+		const labelText = document.createElement( 'span' );
+		labelText.className = 'dbvc-ve-panel__boolean-label';
+		labelText.textContent = initial
+			? ( strings().panelBooleanOn || 'On' )
+			: ( strings().panelBooleanOff || 'Off' );
+		checkbox.addEventListener( 'change', function () {
+			labelText.textContent = checkbox.checked
+				? ( strings().panelBooleanOn || 'On' )
+				: ( strings().panelBooleanOff || 'Off' );
+		} );
+		wrapper.appendChild( checkbox );
+		wrapper.appendChild( labelText );
+
+		return {
+			element: wrapper,
+			getValue() {
+				return checkbox.checked ? 1 : 0;
+			},
+			setValue( nextValue ) {
+				const next = coerceBooleanValue( nextValue );
+				checkbox.checked = next;
+				labelText.textContent = next
+					? ( strings().panelBooleanOn || 'On' )
+					: ( strings().panelBooleanOff || 'Off' );
+			},
+			focus() {
+				checkbox.focus();
+			},
+			setDisabled( disabled ) {
+				checkbox.disabled = Boolean( disabled );
+			},
+		};
+	}
+
+	function coerceBooleanValue( value ) {
+		if ( value === true || value === 1 || value === '1' ) {
+			return true;
+		}
+		if ( value === false || value === 0 || value === '0' ) {
+			return false;
+		}
+		if ( typeof value === 'string' ) {
+			const lower = value.trim().toLowerCase();
+			if ( lower === 'true' || lower === 'on' || lower === 'yes' ) {
+				return true;
+			}
+		}
+		return Boolean( value );
+	}
+
 	function createTextareaController( value ) {
 		const field = document.createElement( 'textarea' );
 
@@ -11046,7 +11136,16 @@
 			case 'url':
 			case 'email':
 			case 'number':
+			// R5.2+color_picker: native `<input type="color">` — no new
+			// controller required; the browser's built-in picker handles
+			// the UX. Value round-trips as `#rrggbb`.
+			case 'color':
 				return createInputController( inputType, value );
+			// true_false: checkbox controller for ACF boolean fields.
+			// Value round-trips as `1` / `0` — server resolver coerces
+			// via AcfTrueFalseResolver::coerceToBool.
+			case 'true_false':
+				return createBooleanController( value );
 			default:
 				return createInputController( 'text', value );
 		}
@@ -12589,6 +12688,12 @@
 					: strings().panelSaved || 'Saved successfully.' );
 
 			if ( isCompositeSave ) {
+				// R4-D-1: dispatch panel:saved for composite saves too so
+				// the drawer's save-status-strip lights up regardless of
+				// which save button was clicked. See non-composite path
+				// below for the full rationale.
+				dispatchPanelSaved( token );
+
 				const activePayload = state.activeDescriptor
 					? getCachedDescriptorPayload( state.activeDescriptor.token )
 					: null;
@@ -12687,6 +12792,16 @@
 						? saveResult.entitySummary
 						: null,
 			} );
+
+			// R4-D-1: notify any listener (currently the Brand Control
+			// Center drawer's save-status-strip) that this descriptor was
+			// just saved. Dispatch is unconditional + fail-safe — the
+			// drawer's listener gates on `state.activeToken === detail.token`
+			// so events for descriptors the drawer did not open are dropped
+			// there. The dispatch runs BEFORE the shouldReloadAfterSave
+			// window.location.reload so the drawer has one tick to render
+			// its confirmation strip when the reload path is taken.
+			dispatchPanelSaved( token );
 
 			if ( shouldReloadAfterSave ) {
 				state.reloadPending = true;

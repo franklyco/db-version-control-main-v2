@@ -70,6 +70,12 @@ final class ResolverRegistry
             new NativeReadonlyResolver(),
             new AcfWysiwygResolver(),
             new AcfChoiceResolver(),
+            // R5.2+color_picker — routes ACF color_picker fields to the
+            // panel's native `<input type="color">` controller.
+            new AcfColorPickerResolver(),
+            // true_false — routes ACF boolean fields to the panel's
+            // createBooleanController (checkbox + label).
+            new AcfTrueFalseResolver(),
             new AcfLinkResolver(),
             new AcfImageResolver(),
             new AcfGalleryResolver(),

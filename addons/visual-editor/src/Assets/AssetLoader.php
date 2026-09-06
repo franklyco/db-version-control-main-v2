@@ -214,6 +214,11 @@ final class AssetLoader
                     'panelEmpty' => __('No field is selected yet.', 'dbvc'),
                     'panelLoading' => __('Loading field details…', 'dbvc'),
                     'panelSaving' => __('Saving…', 'dbvc'),
+                    // true_false: labels for the boolean panel controller
+                    // (checkbox + label) and the drawer's boolean chip
+                    // fallback when the server summary is unlocalized.
+                    'panelBooleanOn' => __('On', 'dbvc'),
+                    'panelBooleanOff' => __('Off', 'dbvc'),
                     'panelReady' => __('Select a marker to inspect or edit it.', 'dbvc'),
                     'panelSaved' => __('Saved successfully.', 'dbvc'),
                     'panelSource' => __('Source', 'dbvc'),
@@ -393,7 +398,47 @@ final class AssetLoader
                     'controlCenterClose' => __('Close Global Brand Control Center', 'dbvc'),
                     'controlCenterSummary' => __('{count} controls', 'dbvc'),
                     'controlCenterSearchLabel' => __('Search controls', 'dbvc'),
-                    'controlCenterSearchPlaceholder' => __('Search controls…', 'dbvc'),
+                    // R4-C-1a: placeholder widened to reflect the R4-A `q`
+                    // param matching label OR description.
+                    'controlCenterSearchPlaceholder' => __('Search labels, descriptions, owner…', 'dbvc'),
+                    'controlCenterRefreshing' => __('Refreshing…', 'dbvc'),
+                    'controlCenterProviderErrorSingular' => __('{count} provider unavailable — {names}', 'dbvc'),
+                    'controlCenterProviderErrorPlural' => __('{count} providers unavailable — {names}', 'dbvc'),
+                    'controlCenterProviderErrorDismiss' => __('Dismiss', 'dbvc'),
+                    // R4-C-1b: value-summary chip label for relationship /
+                    // post_object families. Text prefaces the connected-item
+                    // count that renders in the row's action cell.
+                    'controlCenterValueRelationshipConnected' => __('connected', 'dbvc'),
+                    // R5.1-a: text-family chip truncation suffix — appended
+                    // after the preview when the value was longer than the
+                    // 32-character preview cap. Shows the ORIGINAL character
+                    // count so the viewer can see how much was cut.
+                    'controlCenterValueTextTruncated' => __('({count})', 'dbvc'),
+                    // R5.2-a: choice-family chip suffix for multi-checkbox
+                    // summaries — appended after the count.
+                    'controlCenterValueChoiceSelected' => __('selected', 'dbvc'),
+                    // R5.2-b: wysiwyg-family chip suffix — word count for
+                    // the stripped-text preview.
+                    'controlCenterValueWysiwygWords' => __('· {count} words', 'dbvc'),
+                    // R4-C-2: header segmented view-mode toggle (By category
+                    // vs By provider), collapsible group headers, search
+                    // wrap Clear button, and default provider labels.
+                    'controlCenterViewToggleLabel' => __('Category view', 'dbvc'),
+                    'controlCenterViewByCategory' => __('By category', 'dbvc'),
+                    'controlCenterViewByProvider' => __('By provider', 'dbvc'),
+                    'controlCenterGroupExpand' => __('Expand group', 'dbvc'),
+                    'controlCenterGroupCollapse' => __('Collapse group', 'dbvc'),
+                    'controlCenterGroupControlsCount' => __('{count} controls', 'dbvc'),
+                    'controlCenterGroupUnnamed' => __('Other', 'dbvc'),
+                    'controlCenterProviderShared' => __('Shared Globals', 'dbvc'),
+                    'controlCenterProviderVertical' => __('Vertical', 'dbvc'),
+                    'controlCenterProviderUnknown' => __('Other', 'dbvc'),
+                    'controlCenterClearSearch' => __('Clear search', 'dbvc'),
+                    // R4-D-1: transient confirmation strip shown briefly
+                    // after the editor panel saves the row the drawer
+                    // opened. Same string doubles as the polite-live-region
+                    // announcement text.
+                    'controlCenterSaveStatus' => __('Saved {label}.', 'dbvc'),
                     'controlCenterTabAll' => __('All', 'dbvc'),
                     'controlCenterTablist' => __('Category', 'dbvc'),
                     'controlCenterStatusLabel' => __('Status', 'dbvc'),

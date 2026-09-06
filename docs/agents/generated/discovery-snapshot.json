@@ -3,8 +3,8 @@
     "snapshot_status": "observed_unreviewed",
     "repository": {
         "scope": "repository_only",
-        "source_file_count": 370,
-        "source_fingerprint": "sha256:e0f701ed6c795a5cd1982f566ad330d4955a27a70c358df754137021a6423333",
+        "source_file_count": 372,
+        "source_fingerprint": "sha256:d630c9b43844e4b51330d46f1bbbf84db5b23b4c5166759899d0be00b82d6226",
         "live_runtime_verified": false
     },
     "counts": {
@@ -15,14 +15,14 @@
         "cli_commands": 26,
         "cli_namespaces": 9,
         "database_tables": 14,
-        "documentation": 413,
+        "documentation": 414,
         "extension_points": 156,
         "hook_listeners": 187,
         "rest_routes": 142,
         "scheduled_hooks": 3,
         "settings": 51,
         "source_reference_documentation": 13,
-        "tests": 115
+        "tests": 122
     },
     "collections": {
         "admin_handlers": [
@@ -2669,6 +2669,7 @@
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R3-REGISTRY-BACKED-BRAND-CONTROL-CENTER.md",
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R4-EXPANDED-GLOBAL-BRAND-CONTROL-CENTER.md",
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R5-ACF-OPTION-FIELD-FAMILY-SUPPORT.md",
+            "docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R5-REMAINING-UNLOCK-FRONTIERS.md",
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R6-FRONTEND-SITE-MANAGER-WORKSPACE.md",
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/tracking/DECISION-LOG.md",
             "docs/dropins/dbvc-visual-editor-brand-controls-guide/tracking/EVIDENCE-LOG.md",
@@ -4401,14 +4402,14 @@
                 }
             },
             {
-                "discovery_id": "hook.extension_point.dbvc_visual_editor_control_center_description.5d884d1f",
+                "discovery_id": "hook.extension_point.dbvc_visual_editor_control_center_description.c6dfb57c",
                 "kind": "extension_point",
                 "scope": "core",
                 "function": "apply_filters",
                 "hook": "dbvc_visual_editor_control_center_description",
                 "source_ref": {
                     "path": "addons/visual-editor/src/Registry/Providers/SharedGlobalsControlProvider.php",
-                    "line": 159
+                    "line": 166
                 }
             },
             {
@@ -4632,14 +4633,14 @@
                 }
             },
             {
-                "discovery_id": "hook.extension_point.dbvc_visual_editor_restricted_option_group_roots.a6ea5380",
+                "discovery_id": "hook.extension_point.dbvc_visual_editor_restricted_option_group_roots.3b65b39c",
                 "kind": "extension_point",
                 "scope": "core",
                 "function": "apply_filters",
                 "hook": "dbvc_visual_editor_restricted_option_group_roots",
                 "source_ref": {
                     "path": "addons/visual-editor/src/Resolvers/ResolverRegistry.php",
-                    "line": 5193
+                    "line": 5199
                 }
             },
             {
@@ -10317,9 +10318,15 @@
             "tests/phpunit/ThirdPartyPortabilityTest.php",
             "tests/phpunit/TransferPacketWorkflowTest.php",
             "tests/phpunit/VisualEditorControlCenterHardeningTest.php",
+            "tests/phpunit/VisualEditorControlCenterNestedReferenceTest.php",
             "tests/phpunit/VisualEditorControlCenterProvidersFilterTest.php",
             "tests/phpunit/VisualEditorControlCenterR4ATest.php",
+            "tests/phpunit/VisualEditorControlCenterR51ATest.php",
+            "tests/phpunit/VisualEditorControlCenterR52ColorPickerTest.php",
+            "tests/phpunit/VisualEditorControlCenterR52Test.php",
+            "tests/phpunit/VisualEditorControlCenterR53Test.php",
             "tests/phpunit/VisualEditorControlCenterRoutesTest.php",
+            "tests/phpunit/VisualEditorControlCenterTrueFalseTest.php",
             "tests/phpunit/VisualEditorControlRegistryTest.php",
             "tests/phpunit/VisualEditorCurationCandidateProviderTest.php",
             "tests/phpunit/VisualEditorCurationExporterTest.php",
@@ -10348,7 +10355,8 @@
             "tests/phpunit/VisualEditorMediaManagerR2ETest.php",
             "tests/phpunit/VisualEditorMediaManagerR2FReplaceTest.php",
             "tests/phpunit/VisualEditorMediaManagerR2FTest.php",
-            "tests/phpunit/VisualEditorSharedGlobalsControlProviderTest.php"
+            "tests/phpunit/VisualEditorSharedGlobalsControlProviderTest.php",
+            "tests/phpunit/VisualEditorVerticalProviderR51BTest.php"
         ]
     },
     "limitations": [
