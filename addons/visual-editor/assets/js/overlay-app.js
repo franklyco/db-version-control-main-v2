@@ -2800,6 +2800,33 @@
 				openToolbarDescriptorPanel( token );
 			}
 		);
+		// R5.later-b (2026-09-05): the drawer dispatches this when a
+		// curator clicks Expand on a palette parent. Fetch the palette
+		// descriptor via the same /control-center/open route the
+		// drawer's Open button uses, then mount our modal popover
+		// (Option Y — dedicated popup). Zero new REST routes; the
+		// modal reuses the R5.later-y-2 lazy-open + save flow byte-
+		// identical for each swatch's edits.
+		document.addEventListener(
+			'dbvc:visual-editor:open-palette-bulk',
+			function ( event ) {
+				if ( ! isControlCenterEnabled() ) {
+					return;
+				}
+				const detail =
+					event && event.detail && typeof event.detail === 'object'
+						? event.detail
+						: {};
+				const publicId =
+					typeof detail.publicId === 'string' && detail.publicId
+						? detail.publicId
+						: '';
+				if ( ! publicId ) {
+					return;
+				}
+				openPaletteBulkPopover( publicId );
+			}
+		);
 	}
 
 	function renderToolbarIcon( name ) {
@@ -7789,6 +7816,906 @@
 		};
 	}
 
+	// R5.later-y (2026-09-04) — palette overview panel controller.
+	// R5.later-y-2 (2026-09-05) — swatches are now LIVE inline color
+	// editors, not navigation buttons. Reads `descriptor.source.leaves`
+	// (array of {publicId, label, current_hex}) minted by Vertical's
+	// `buildPaletteOverviewDescriptor`. Renders a responsive CSS grid
+	// where each cell is a `<label>` wrapping a native `<input
+	// type="color">` + the label/hex text + a save-status indicator.
+	//
+	// Save flow (lazy-open + save through the existing R5.2+color_picker
+	// contract):
+	//   1. First change on a swatch → POST /control-center/open with the
+	//      leaf's publicId → cache the returned token per publicId.
+	//   2. Every change (first or subsequent) → POST /save with cached
+	//      token + new hex value → update per-swatch status indicator
+	//      (pending → saved → clear after 1.5s) or error state.
+	// The token cache means only the first edit of a specific swatch
+	// pays the open round-trip; every subsequent edit is a single
+	// round-trip save. `input` events fire while dragging the native
+	// picker — we debounce 250ms so a live drag saves once at rest.
+	//
+	// getValue() returns null — the panel's Save button intentionally
+	// no-ops for palette overviews (handleSave has an early-return for
+	// `descriptor.render.input === 'palette_grid'`). Saves are per-swatch,
+	// not whole-panel.
+	function createPaletteOverviewController( descriptor ) {
+		const wrapper = document.createElement( 'div' );
+		wrapper.className = 'dbvc-ve-panel__palette-overview';
+		wrapper.id = 'dbvc-ve-panel-input';
+		const s = strings();
+		const source =
+			descriptor && descriptor.source && typeof descriptor.source === 'object'
+				? descriptor.source
+				: {};
+		const leaves =
+			source && Array.isArray( source.leaves ) ? source.leaves : [];
+		const count = leaves.length;
+		// Header text with pluralised color count.
+		const header = document.createElement( 'p' );
+		header.className = 'dbvc-ve-panel__palette-overview-header';
+		const headerTemplate =
+			count === 1
+				? s.panelPaletteOverviewHeaderOne || '{count} color in this palette. Each color saves automatically when changed.'
+				: s.panelPaletteOverviewHeaderMany || '{count} colors in this palette. Each color saves automatically when changed.';
+		header.textContent = headerTemplate.replace( '{count}', String( count ) );
+		wrapper.appendChild( header );
+
+		const grid = document.createElement( 'div' );
+		grid.className = 'dbvc-ve-panel__palette-overview-grid';
+		grid.setAttribute( 'role', 'list' );
+		wrapper.appendChild( grid );
+
+		if ( count === 0 ) {
+			const empty = document.createElement( 'p' );
+			empty.className = 'dbvc-ve-panel__palette-overview-empty';
+			empty.textContent =
+				s.panelPaletteOverviewEmpty || 'No colors in this palette yet.';
+			wrapper.appendChild( empty );
+		}
+
+		// R5.later-y-2 — per-publicId descriptor cache. Populated on the
+		// first swatch change; subsequent saves against the same swatch
+		// reuse the cached token.
+		//
+		// R5.later-y-3 (2026-09-05) — pre-warm the cache with each
+		// leaf's pre-minted token when the Vertical provider embedded
+		// one. The server-side `ControlCenterOpenController` registers
+		// those leaf descriptors alongside the palette parent at open
+		// time, so a save against a pre-minted token works immediately
+		// without an intermediate `/control-center/open` call. First
+		// save per swatch drops from 2 round-trips to 1. Leaves missing
+		// a pre-minted token (defensive — factory build failed for that
+		// leaf) still fall through to the lazy-open path unchanged.
+		const descriptorCache = {};
+		const debounceTimers = {};
+		leaves.forEach( function ( leaf ) {
+			if (
+				leaf &&
+				typeof leaf.publicId === 'string' &&
+				leaf.publicId &&
+				typeof leaf.token === 'string' &&
+				leaf.token
+			) {
+				descriptorCache[ leaf.publicId ] = { token: leaf.token };
+			}
+		} );
+
+		leaves.forEach( function ( leaf ) {
+			if ( ! leaf || typeof leaf !== 'object' ) {
+				return;
+			}
+			const publicId =
+				typeof leaf.publicId === 'string' ? leaf.publicId : '';
+			const label = typeof leaf.label === 'string' ? leaf.label : '';
+			const initialHex =
+				typeof leaf.current_hex === 'string' ? leaf.current_hex : '';
+			if ( publicId === '' ) {
+				return;
+			}
+			const cell = document.createElement( 'label' );
+			cell.className = 'dbvc-ve-panel__palette-overview-cell';
+			cell.setAttribute( 'role', 'listitem' );
+			cell.setAttribute( 'data-public-id', publicId );
+			const editTemplate =
+				s.panelPaletteOverviewCellLabel || 'Edit {label}';
+			cell.setAttribute(
+				'aria-label',
+				editTemplate.replace( '{label}', label )
+			);
+
+			// Swatch wrapper — the visible color square, positioned above
+			// the native `<input type="color">` which is transparent but
+			// covers the same area so clicking the swatch opens the picker.
+			const swatchWrap = document.createElement( 'span' );
+			swatchWrap.className = 'dbvc-ve-panel__palette-overview-swatch-wrap';
+
+			const swatch = document.createElement( 'span' );
+			swatch.className = 'dbvc-ve-panel__palette-overview-swatch';
+			swatch.setAttribute( 'aria-hidden', 'true' );
+			if ( initialHex !== '' ) {
+				swatch.style.backgroundColor = initialHex;
+			} else {
+				swatch.classList.add( 'is-empty' );
+			}
+			swatchWrap.appendChild( swatch );
+
+			const input = document.createElement( 'input' );
+			input.type = 'color';
+			input.className = 'dbvc-ve-panel__palette-overview-input';
+			// Native color inputs REQUIRE a hex value — a real one, not
+			// empty. Fall back to a neutral gray when the current value
+			// is empty so the picker opens without a warning; on change
+			// the user's actual pick becomes the new value.
+			input.value = initialHex !== '' ? initialHex : '#000000';
+			input.setAttribute(
+				'aria-label',
+				editTemplate.replace( '{label}', label )
+			);
+			swatchWrap.appendChild( input );
+			cell.appendChild( swatchWrap );
+
+			const meta = document.createElement( 'span' );
+			meta.className = 'dbvc-ve-panel__palette-overview-meta';
+			const nameEl = document.createElement( 'span' );
+			nameEl.className = 'dbvc-ve-panel__palette-overview-name';
+			nameEl.textContent = label;
+			const hexEl = document.createElement( 'span' );
+			hexEl.className = 'dbvc-ve-panel__palette-overview-hex';
+			hexEl.textContent = initialHex !== '' ? initialHex : '—';
+			meta.appendChild( nameEl );
+			meta.appendChild( hexEl );
+			cell.appendChild( meta );
+
+			// Per-cell save status indicator. `aria-live="polite"` so
+			// screen readers announce state changes. Empty text renders
+			// no dot; the CSS uses `:empty` to collapse the slot.
+			const statusEl = document.createElement( 'span' );
+			statusEl.className = 'dbvc-ve-panel__palette-overview-cell-status';
+			statusEl.setAttribute( 'role', 'status' );
+			statusEl.setAttribute( 'aria-live', 'polite' );
+			cell.appendChild( statusEl );
+
+			// `input` event fires continuously while the user is dragging
+			// the picker; `change` fires once at rest. We debounce a
+			// combined listener so a rapid drag doesn't fire N saves —
+			// just one at the end. 250ms matches the R4-C-1a search
+			// debounce for consistency.
+			function handleSwatchChange() {
+				const newHex = input.value;
+				if ( debounceTimers[ publicId ] ) {
+					window.clearTimeout( debounceTimers[ publicId ] );
+				}
+				debounceTimers[ publicId ] = window.setTimeout( function () {
+					debounceTimers[ publicId ] = 0;
+					saveSwatch( publicId, newHex, cell, swatch, hexEl, statusEl );
+				}, 250 );
+			}
+			input.addEventListener( 'input', handleSwatchChange );
+			input.addEventListener( 'change', handleSwatchChange );
+
+			grid.appendChild( cell );
+		} );
+
+		function saveSwatch( publicId, hex, cell, swatch, hexEl, statusEl ) {
+			setCellState( cell, statusEl, 'saving', s );
+			// R5.later-y-2 — lazy-open pattern: first save on a swatch
+			// resolves the leaf's descriptor via a silent /open call
+			// (dispatched as `absorb-descriptor: false` so overlay-app
+			// doesn't remount the panel). Cached tokens skip this step.
+			const cached = descriptorCache[ publicId ];
+			const openPromise = cached
+				? Promise.resolve( { token: cached.token } )
+				: openLeafDescriptor( publicId );
+			openPromise
+				.then( function ( openResult ) {
+					if ( ! openResult || ! openResult.token ) {
+						throw new Error( 'open failed' );
+					}
+					if ( ! cached ) {
+						descriptorCache[ publicId ] = openResult;
+					}
+					return window.DBVCVisualEditorApi.save(
+						getSessionId(),
+						openResult.token,
+						hex,
+						true
+					);
+				} )
+				.then( function () {
+					// Optimistically update the swatch + hex label. The
+					// server-returned value is authoritative but for a
+					// simple hex round-trip the input's value is already
+					// the sanitized form.
+					swatch.style.backgroundColor = hex;
+					swatch.classList.remove( 'is-empty' );
+					hexEl.textContent = hex;
+					setCellState( cell, statusEl, 'saved', s );
+					// Clear the saved state after 1.5s so the cell
+					// returns to idle. Matches R4-D-1's save-status-strip
+					// fade timing shape but scoped per-cell not per-panel.
+					window.setTimeout( function () {
+						if ( cell.dataset.state === 'saved' ) {
+							setCellState( cell, statusEl, 'idle', s );
+						}
+					}, 1500 );
+				} )
+				.catch( function () {
+					setCellState( cell, statusEl, 'error', s );
+				} );
+		}
+
+		function openLeafDescriptor( publicId ) {
+			const openUrl =
+				DBVCVisualEditorBootstrap.restBase +
+				'/session/' +
+				encodeURIComponent( getSessionId() ) +
+				'/control-center/open';
+			return window
+				.fetch( openUrl, {
+					method: 'POST',
+					credentials: 'same-origin',
+					headers: {
+						Accept: 'application/json',
+						'Content-Type': 'application/json',
+						'X-WP-Nonce': DBVCVisualEditorBootstrap.nonce,
+					},
+					body: JSON.stringify( { publicId: publicId } ),
+				} )
+				.then( function ( response ) {
+					return response
+						.json()
+						.catch( function () {
+							return null;
+						} )
+						.then( function ( payload ) {
+							if (
+								! response.ok ||
+								! payload ||
+								payload.ok !== true ||
+								! payload.descriptors
+							) {
+								return null;
+							}
+							const tokens = Object.keys( payload.descriptors );
+							if ( tokens.length === 0 ) {
+								return null;
+							}
+							return { token: tokens[ 0 ] };
+						} );
+				} );
+		}
+
+		function setCellState( cell, statusEl, state, sBag ) {
+			cell.dataset.state = state;
+			switch ( state ) {
+				case 'saving':
+					statusEl.textContent =
+						sBag.panelPaletteOverviewCellSaving || 'Saving…';
+					break;
+				case 'saved':
+					statusEl.textContent =
+						sBag.panelPaletteOverviewCellSaved || 'Saved';
+					break;
+				case 'error':
+					statusEl.textContent =
+						sBag.panelPaletteOverviewCellError || 'Save failed';
+					break;
+				default:
+					statusEl.textContent = '';
+			}
+		}
+
+		return {
+			element: wrapper,
+			getValue() {
+				// Palette overview saves are per-swatch, not whole-panel.
+				// Returning `null` (vs an empty string) signals "no
+				// writeable value" so a defensive check in handleSave
+				// can skip the outer Save button click.
+				return null;
+			},
+			setValue( /* nextValue */ ) {
+				// No-op — palette overview has no writable state at the
+				// container level. Per-swatch saves are managed
+				// internally via `saveSwatch`.
+			},
+			focus() {
+				const firstInput = wrapper.querySelector(
+					'.dbvc-ve-panel__palette-overview-input'
+				);
+				if ( firstInput ) {
+					firstInput.focus();
+				}
+			},
+			setDisabled( /* disabled */ ) {
+				// R5.later-y-2c hotfix (2026-09-05): NO-OP intentional.
+				// The panel-level `handleSave` calls `setDisabled(true)`
+				// when `result.canEdit === false`, which is always the
+				// case for palette overviews because the descriptor's
+				// status is `available` (not `editable`) and its
+				// mutation array is empty (no whole-panel save). Left
+				// as a naive input-disable, this would disable every
+				// swatch's `<input type="color">` and lock the user out
+				// of inline editing. Per-swatch saves route through
+				// each leaf's OWN descriptor (via lazy `openLeafDescriptor`
+				// on first change) — that leaf descriptor IS editable
+				// and IS writable via the existing R5.2+color_picker
+				// save contract, so the palette parent's "not writable"
+				// state is orthogonal to whether individual swatches
+				// can save. The correct behaviour is to keep swatches
+				// enabled regardless of the panel-level disabled call.
+			},
+		};
+	}
+
+	// R5.later-b (2026-09-05) — Option Y bulk-palette popover.
+	// Full-attention modal surface for editing a palette's colors.
+	// Complements R5.later-y-2's compact side-panel by giving curators
+	// a larger canvas with per-swatch Copy-hex + a header
+	// "Copy all as CSS variables" action for design-token export.
+	//
+	// State: single-modal-at-a-time (rebuilds if reopened while open).
+	// Save flow byte-identical to the side-panel: each swatch runs
+	// its own lazy-open + save via the leaf's own single-color descriptor.
+	// Zero new REST routes, zero new mutation authority.
+
+	// Module-scoped modal-state so a second open replaces (not stacks).
+	let paletteBulkPopoverState = null;
+
+	function openPaletteBulkPopover( publicId ) {
+		if ( ! publicId ) {
+			return;
+		}
+		if ( ! DBVCVisualEditorBootstrap || ! DBVCVisualEditorBootstrap.restBase ) {
+			return;
+		}
+		// If a modal is already open (curator clicked Expand while it was
+		// up), replace its contents rather than stacking.
+		closePaletteBulkPopover();
+		const openUrl =
+			DBVCVisualEditorBootstrap.restBase +
+			'/session/' +
+			encodeURIComponent( getSessionId() ) +
+			'/control-center/open';
+		// Loading state — mount an empty modal shell immediately so the
+		// curator sees the surface open without staring at a broken
+		// click. Populate with the swatch grid once the fetch resolves.
+		const shell = buildPaletteBulkPopoverShell();
+		paletteBulkPopoverState = shell;
+		document.body.appendChild( shell.backdrop );
+		shell.headerTitle.textContent =
+			strings().panelPaletteBulkLoading || 'Loading palette…';
+		// Focus the close button so Escape works from keystroke 1.
+		shell.closeButton.focus();
+		window
+			.fetch( openUrl, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					Accept: 'application/json',
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': DBVCVisualEditorBootstrap.nonce,
+				},
+				body: JSON.stringify( { publicId: publicId } ),
+			} )
+			.then( function ( response ) {
+				return response
+					.json()
+					.catch( function () {
+						return null;
+					} )
+					.then( function ( payload ) {
+						if (
+							! response.ok ||
+							! payload ||
+							payload.ok !== true ||
+							! payload.descriptorHydrations
+						) {
+							return null;
+						}
+						const tokens = Object.keys( payload.descriptorHydrations );
+						if ( tokens.length === 0 ) {
+							return null;
+						}
+						const hydration = payload.descriptorHydrations[ tokens[ 0 ] ];
+						if ( ! hydration || ! hydration.descriptor ) {
+							return null;
+						}
+						return hydration.descriptor;
+					} );
+			} )
+			.then( function ( descriptor ) {
+				if ( ! paletteBulkPopoverState || paletteBulkPopoverState !== shell ) {
+					return; // modal was closed / replaced while fetch was in-flight
+				}
+				if ( ! descriptor ) {
+					shell.headerTitle.textContent =
+						strings().panelPaletteBulkFailed ||
+						'Could not load palette.';
+					return;
+				}
+				renderPaletteBulkPopoverContent( shell, descriptor );
+			} )
+			.catch( function () {
+				if ( paletteBulkPopoverState === shell ) {
+					shell.headerTitle.textContent =
+						strings().panelPaletteBulkFailed ||
+						'Could not load palette.';
+				}
+			} );
+	}
+
+	function closePaletteBulkPopover() {
+		if ( ! paletteBulkPopoverState ) {
+			return;
+		}
+		const shell = paletteBulkPopoverState;
+		paletteBulkPopoverState = null;
+		if ( shell.escapeHandler ) {
+			document.removeEventListener( 'keydown', shell.escapeHandler, true );
+		}
+		if ( shell.backdrop && shell.backdrop.parentNode ) {
+			shell.backdrop.parentNode.removeChild( shell.backdrop );
+		}
+		// Restore focus to the drawer's Expand button that opened this
+		// modal, if it's still in the DOM.
+		if ( shell.returnFocus && shell.returnFocus.focus ) {
+			try {
+				shell.returnFocus.focus();
+			} catch ( err ) {
+				/* focus recovery best-effort */
+			}
+		}
+	}
+
+	function buildPaletteBulkPopoverShell() {
+		const s = strings();
+		const backdrop = document.createElement( 'div' );
+		backdrop.className = 'dbvc-ve-palette-bulk-popover-backdrop';
+		backdrop.setAttribute( 'role', 'presentation' );
+
+		const container = document.createElement( 'div' );
+		container.className = 'dbvc-ve-palette-bulk-popover';
+		container.setAttribute( 'role', 'dialog' );
+		container.setAttribute( 'aria-modal', 'true' );
+		container.setAttribute( 'aria-labelledby', 'dbvc-ve-palette-bulk-popover-title' );
+
+		const header = document.createElement( 'div' );
+		header.className = 'dbvc-ve-palette-bulk-popover__header';
+
+		const headerTitle = document.createElement( 'h2' );
+		headerTitle.className = 'dbvc-ve-palette-bulk-popover__title';
+		headerTitle.id = 'dbvc-ve-palette-bulk-popover-title';
+		header.appendChild( headerTitle );
+
+		const headerActions = document.createElement( 'div' );
+		headerActions.className = 'dbvc-ve-palette-bulk-popover__header-actions';
+
+		const copyAllButton = document.createElement( 'button' );
+		copyAllButton.type = 'button';
+		copyAllButton.className =
+			'dbvc-ve-palette-bulk-popover__copy-all is-hidden';
+		copyAllButton.textContent =
+			s.panelPaletteBulkCopyAll || 'Copy all as CSS variables';
+		headerActions.appendChild( copyAllButton );
+
+		const closeButton = document.createElement( 'button' );
+		closeButton.type = 'button';
+		closeButton.className = 'dbvc-ve-palette-bulk-popover__close';
+		closeButton.setAttribute(
+			'aria-label',
+			s.panelPaletteBulkClose || 'Close palette editor'
+		);
+		closeButton.setAttribute(
+			'title',
+			s.panelPaletteBulkClose || 'Close palette editor'
+		);
+		closeButton.innerHTML =
+			'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+		closeButton.addEventListener( 'click', closePaletteBulkPopover );
+		headerActions.appendChild( closeButton );
+		header.appendChild( headerActions );
+		container.appendChild( header );
+
+		const body = document.createElement( 'div' );
+		body.className = 'dbvc-ve-palette-bulk-popover__body';
+		container.appendChild( body );
+
+		const statusEl = document.createElement( 'div' );
+		statusEl.className = 'dbvc-ve-palette-bulk-popover__status';
+		statusEl.setAttribute( 'role', 'status' );
+		statusEl.setAttribute( 'aria-live', 'polite' );
+		container.appendChild( statusEl );
+
+		backdrop.appendChild( container );
+
+		// Click-outside close: only when the click lands directly on
+		// the backdrop, not on children.
+		backdrop.addEventListener( 'click', function ( event ) {
+			if ( event.target === backdrop ) {
+				closePaletteBulkPopover();
+			}
+		} );
+
+		// Escape close.
+		const escapeHandler = function ( event ) {
+			if ( event.key === 'Escape' ) {
+				event.preventDefault();
+				closePaletteBulkPopover();
+			}
+		};
+		document.addEventListener( 'keydown', escapeHandler, true );
+
+		return {
+			backdrop: backdrop,
+			container: container,
+			header: header,
+			headerTitle: headerTitle,
+			copyAllButton: copyAllButton,
+			closeButton: closeButton,
+			body: body,
+			statusEl: statusEl,
+			escapeHandler: escapeHandler,
+			returnFocus: document.activeElement,
+			leaves: [],
+			descriptorCache: {},
+		};
+	}
+
+	function renderPaletteBulkPopoverContent( shell, descriptor ) {
+		const s = strings();
+		const source =
+			descriptor && descriptor.source && typeof descriptor.source === 'object'
+				? descriptor.source
+				: {};
+		const leaves = Array.isArray( source.leaves ) ? source.leaves : [];
+		shell.leaves = leaves;
+		// R5.later-y-3 (2026-09-05): pre-warm the modal's descriptor
+		// cache from any leaf tokens the server embedded. Mirrors the
+		// side-panel controller's pre-warm — first save per swatch is
+		// 1 round-trip instead of 2 when leaves carry pre-minted tokens.
+		leaves.forEach( function ( leaf ) {
+			if (
+				leaf &&
+				typeof leaf.publicId === 'string' &&
+				leaf.publicId &&
+				typeof leaf.token === 'string' &&
+				leaf.token
+			) {
+				shell.descriptorCache[ leaf.publicId ] = { token: leaf.token };
+			}
+		} );
+
+		const title =
+			( descriptor.entity && descriptor.entity.label ) ||
+			( descriptor.render && descriptor.render.label ) ||
+			s.panelPaletteBulkFallbackTitle ||
+			'Palette editor';
+		shell.headerTitle.textContent = title;
+
+		// Show Copy All when there's at least one non-empty color.
+		const anyHex = leaves.some( function ( leaf ) {
+			return leaf && typeof leaf.current_hex === 'string' && leaf.current_hex !== '';
+		} );
+		if ( anyHex ) {
+			shell.copyAllButton.classList.remove( 'is-hidden' );
+			shell.copyAllButton.addEventListener( 'click', function () {
+				const css = leaves
+					.filter( function ( leaf ) {
+						return leaf && leaf.current_hex;
+					} )
+					.map( function ( leaf ) {
+						const varName = String( leaf.label || leaf.field_name || '' )
+							.toLowerCase()
+							.replace( /[^a-z0-9]+/g, '-' )
+							.replace( /^-+|-+$/g, '' );
+						return '--' + varName + ': ' + leaf.current_hex + ';';
+					} )
+					.join( '\n' );
+				copyToClipboard( css, shell.statusEl );
+			} );
+		}
+
+		// Body: enlarged swatch grid.
+		shell.body.innerHTML = '';
+		const grid = document.createElement( 'div' );
+		grid.className = 'dbvc-ve-palette-bulk-popover__grid';
+		grid.setAttribute( 'role', 'list' );
+
+		if ( leaves.length === 0 ) {
+			const empty = document.createElement( 'p' );
+			empty.className = 'dbvc-ve-palette-bulk-popover__empty';
+			empty.textContent =
+				s.panelPaletteOverviewEmpty || 'No colors in this palette yet.';
+			shell.body.appendChild( empty );
+			return;
+		}
+
+		leaves.forEach( function ( leaf ) {
+			if ( ! leaf || typeof leaf !== 'object' ) {
+				return;
+			}
+			const publicId =
+				typeof leaf.publicId === 'string' ? leaf.publicId : '';
+			const label = typeof leaf.label === 'string' ? leaf.label : '';
+			const initialHex =
+				typeof leaf.current_hex === 'string' ? leaf.current_hex : '';
+			if ( publicId === '' ) {
+				return;
+			}
+			grid.appendChild(
+				buildPaletteBulkCell( shell, publicId, label, initialHex )
+			);
+		} );
+
+		shell.body.appendChild( grid );
+	}
+
+	function buildPaletteBulkCell( shell, publicId, label, initialHex ) {
+		const s = strings();
+		const cell = document.createElement( 'div' );
+		cell.className = 'dbvc-ve-palette-bulk-popover__cell';
+		cell.setAttribute( 'role', 'listitem' );
+		cell.setAttribute( 'data-public-id', publicId );
+
+		const swatchWrap = document.createElement( 'label' );
+		swatchWrap.className = 'dbvc-ve-palette-bulk-popover__swatch-wrap';
+
+		const swatch = document.createElement( 'span' );
+		swatch.className = 'dbvc-ve-palette-bulk-popover__swatch';
+		swatch.setAttribute( 'aria-hidden', 'true' );
+		if ( initialHex !== '' ) {
+			swatch.style.backgroundColor = initialHex;
+		} else {
+			swatch.classList.add( 'is-empty' );
+		}
+		swatchWrap.appendChild( swatch );
+
+		const input = document.createElement( 'input' );
+		input.type = 'color';
+		input.className = 'dbvc-ve-palette-bulk-popover__input';
+		input.value = initialHex !== '' ? initialHex : '#000000';
+		const editTemplate =
+			s.panelPaletteOverviewCellLabel || 'Edit {label}';
+		input.setAttribute(
+			'aria-label',
+			editTemplate.replace( '{label}', label )
+		);
+		swatchWrap.appendChild( input );
+		cell.appendChild( swatchWrap );
+
+		const meta = document.createElement( 'div' );
+		meta.className = 'dbvc-ve-palette-bulk-popover__meta';
+		const nameEl = document.createElement( 'div' );
+		nameEl.className = 'dbvc-ve-palette-bulk-popover__name';
+		nameEl.textContent = label;
+		const hexEl = document.createElement( 'code' );
+		hexEl.className = 'dbvc-ve-palette-bulk-popover__hex';
+		hexEl.textContent = initialHex !== '' ? initialHex : '—';
+		meta.appendChild( nameEl );
+		meta.appendChild( hexEl );
+		cell.appendChild( meta );
+
+		const actions = document.createElement( 'div' );
+		actions.className = 'dbvc-ve-palette-bulk-popover__cell-actions';
+		const copyButton = document.createElement( 'button' );
+		copyButton.type = 'button';
+		copyButton.className = 'dbvc-ve-palette-bulk-popover__copy';
+		copyButton.textContent = s.panelPaletteBulkCopyHex || 'Copy hex';
+		copyButton.disabled = initialHex === '';
+		copyButton.addEventListener( 'click', function () {
+			const hex = hexEl.textContent || '';
+			if ( hex && hex !== '—' ) {
+				copyToClipboard( hex, shell.statusEl );
+			}
+		} );
+		actions.appendChild( copyButton );
+
+		const statusEl = document.createElement( 'span' );
+		statusEl.className = 'dbvc-ve-palette-bulk-popover__cell-status';
+		statusEl.setAttribute( 'role', 'status' );
+		statusEl.setAttribute( 'aria-live', 'polite' );
+		actions.appendChild( statusEl );
+
+		cell.appendChild( actions );
+
+		let debounceTimer = 0;
+		function handleChange() {
+			const newHex = input.value;
+			if ( debounceTimer ) {
+				window.clearTimeout( debounceTimer );
+			}
+			debounceTimer = window.setTimeout( function () {
+				debounceTimer = 0;
+				saveBulkCell(
+					shell,
+					publicId,
+					newHex,
+					cell,
+					swatch,
+					hexEl,
+					copyButton,
+					statusEl
+				);
+			}, 250 );
+		}
+		input.addEventListener( 'input', handleChange );
+		input.addEventListener( 'change', handleChange );
+
+		return cell;
+	}
+
+	function saveBulkCell(
+		shell,
+		publicId,
+		hex,
+		cell,
+		swatch,
+		hexEl,
+		copyButton,
+		statusEl
+	) {
+		const s = strings();
+		setBulkCellState( cell, statusEl, 'saving', s );
+		const cached = shell.descriptorCache[ publicId ];
+		const openPromise = cached
+			? Promise.resolve( { token: cached.token } )
+			: openLeafDescriptorForBulk( publicId );
+		openPromise
+			.then( function ( openResult ) {
+				if ( ! openResult || ! openResult.token ) {
+					throw new Error( 'open failed' );
+				}
+				if ( ! cached ) {
+					shell.descriptorCache[ publicId ] = openResult;
+				}
+				return window.DBVCVisualEditorApi.save(
+					getSessionId(),
+					openResult.token,
+					hex,
+					true
+				);
+			} )
+			.then( function () {
+				swatch.style.backgroundColor = hex;
+				swatch.classList.remove( 'is-empty' );
+				hexEl.textContent = hex;
+				copyButton.disabled = false;
+				setBulkCellState( cell, statusEl, 'saved', s );
+				window.setTimeout( function () {
+					if ( cell.dataset.state === 'saved' ) {
+						setBulkCellState( cell, statusEl, 'idle', s );
+					}
+				}, 1500 );
+			} )
+			.catch( function () {
+				setBulkCellState( cell, statusEl, 'error', s );
+			} );
+	}
+
+	function openLeafDescriptorForBulk( publicId ) {
+		const openUrl =
+			DBVCVisualEditorBootstrap.restBase +
+			'/session/' +
+			encodeURIComponent( getSessionId() ) +
+			'/control-center/open';
+		return window
+			.fetch( openUrl, {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: {
+					Accept: 'application/json',
+					'Content-Type': 'application/json',
+					'X-WP-Nonce': DBVCVisualEditorBootstrap.nonce,
+				},
+				body: JSON.stringify( { publicId: publicId } ),
+			} )
+			.then( function ( response ) {
+				return response
+					.json()
+					.catch( function () {
+						return null;
+					} )
+					.then( function ( payload ) {
+						if (
+							! response.ok ||
+							! payload ||
+							payload.ok !== true ||
+							! payload.descriptors
+						) {
+							return null;
+						}
+						const tokens = Object.keys( payload.descriptors );
+						if ( tokens.length === 0 ) {
+							return null;
+						}
+						return { token: tokens[ 0 ] };
+					} );
+			} );
+	}
+
+	function setBulkCellState( cell, statusEl, state, sBag ) {
+		cell.dataset.state = state;
+		switch ( state ) {
+			case 'saving':
+				statusEl.textContent =
+					sBag.panelPaletteOverviewCellSaving || 'Saving…';
+				break;
+			case 'saved':
+				statusEl.textContent =
+					sBag.panelPaletteOverviewCellSaved || 'Saved';
+				break;
+			case 'error':
+				statusEl.textContent =
+					sBag.panelPaletteOverviewCellError || 'Save failed';
+				break;
+			default:
+				statusEl.textContent = '';
+		}
+	}
+
+	function copyToClipboard( text, statusEl ) {
+		const s = strings();
+		if (
+			navigator &&
+			navigator.clipboard &&
+			typeof navigator.clipboard.writeText === 'function'
+		) {
+			navigator.clipboard
+				.writeText( text )
+				.then( function () {
+					showBulkStatus(
+						statusEl,
+						s.panelPaletteBulkCopied || 'Copied to clipboard.'
+					);
+				} )
+				.catch( function () {
+					showBulkStatus(
+						statusEl,
+						s.panelPaletteBulkCopyFailed ||
+							'Could not copy to clipboard.'
+					);
+				} );
+			return;
+		}
+		// Fallback for browsers without navigator.clipboard — a hidden
+		// textarea + execCommand('copy'). Older Safari, older Firefox.
+		try {
+			const ta = document.createElement( 'textarea' );
+			ta.value = text;
+			ta.setAttribute( 'aria-hidden', 'true' );
+			ta.style.position = 'fixed';
+			ta.style.left = '-9999px';
+			document.body.appendChild( ta );
+			ta.select();
+			document.execCommand( 'copy' );
+			document.body.removeChild( ta );
+			showBulkStatus(
+				statusEl,
+				s.panelPaletteBulkCopied || 'Copied to clipboard.'
+			);
+		} catch ( err ) {
+			showBulkStatus(
+				statusEl,
+				s.panelPaletteBulkCopyFailed || 'Could not copy to clipboard.'
+			);
+		}
+	}
+
+	function showBulkStatus( statusEl, message ) {
+		if ( ! statusEl ) {
+			return;
+		}
+		statusEl.textContent = message;
+		window.setTimeout( function () {
+			if ( statusEl.textContent === message ) {
+				statusEl.textContent = '';
+			}
+		}, 2000 );
+	}
+
 	function coerceBooleanValue( value ) {
 		if ( value === true || value === 1 || value === '1' ) {
 			return true;
@@ -11140,12 +12067,27 @@
 			// controller required; the browser's built-in picker handles
 			// the UX. Value round-trips as `#rrggbb`.
 			case 'color':
+			// R5.5: native `<input type="date">` — no new controller.
+			// Value round-trips as ISO `YYYY-MM-DD`; server sanitize
+			// coerces via AcfDatePickerResolver::normalizeIsoDate.
+			case 'date':
 				return createInputController( inputType, value );
 			// true_false: checkbox controller for ACF boolean fields.
 			// Value round-trips as `1` / `0` — server resolver coerces
 			// via AcfTrueFalseResolver::coerceToBool.
 			case 'true_false':
 				return createBooleanController( value );
+			// R5.later-y (2026-09-04): palette overview panel. Renders
+			// a CSS grid of swatch buttons — each cell shows the
+			// color's label + its current hex in a solid swatch.
+			// Clicking a swatch dispatches an `open-control` event
+			// with the leaf's publicId; the drawer listens and opens
+			// that leaf's own single-color panel via the existing
+			// R5.2+color_picker path. The controller returns null
+			// from `getValue()` so the panel's save-on-blur path
+			// treats palette parents as read-only.
+			case 'palette_grid':
+				return createPaletteOverviewController( descriptor );
 			default:
 				return createInputController( 'text', value );
 		}
@@ -12594,6 +13536,20 @@
 			! state.session ||
 			! state.activeDescriptor ||
 			! state.activeController
+		) {
+			return;
+		}
+
+		// R5.later-y-2 (2026-09-05) — palette overview panels save
+		// per-swatch inline, not via this whole-panel Save button.
+		// getValue() returns null for palette_grid controllers; passing
+		// null to the save endpoint would risk zeroing a color, so we
+		// short-circuit before reaching the API call. The palette panel
+		// header already carries a "saves automatically" hint so users
+		// aren't confused by the disabled-looking Save button.
+		if (
+			state.activeDescriptor.render &&
+			state.activeDescriptor.render.input === 'palette_grid'
 		) {
 			return;
 		}

@@ -46,6 +46,22 @@
 	// new fixture group appearing after localStorage was written still
 	// collapses by default.
 	const LS_KEY_EXPANDED_GROUPS = 'dbvc.ve.control-center.groups';
+	// R5.7-b: persisted set of expanded tree parent publicIds. Same
+	// deviations-from-default pattern as expanded-groups: default state
+	// is COLLAPSED; the persisted list holds only the parents the viewer
+	// has explicitly opened. Cleared on close() -- expansions live for
+	// the viewer's browsing life, not per-drawer-session.
+	const LS_KEY_EXPANDED_ROWS = 'dbvc.ve.control-center.expanded-rows';
+	const REPEATER_PARENT_ROLE = 'repeater_parent';
+	const REPEATER_LEAF_ROLE = 'repeater_leaf';
+	// R5.later-a: palette parents share the tree-render surface with
+	// R5.7-b repeater parents. The list stays open so future
+	// tree-adjacent roles (e.g. a future flexible-content parent)
+	// register without a further JS change.
+	const TREE_PARENT_ROLES = Object.freeze( [
+		REPEATER_PARENT_ROLE,
+		'palette',
+	] );
 	const FORBIDDEN_ROW_ATTRS = Object.freeze( [
 		'data-owner-id',
 		'data-field-key',
@@ -115,6 +131,16 @@
 		// keeps localStorage cheap and makes the "default collapsed" claim
 		// robust to new groups appearing in the fixture.
 		expandedGroups: null,
+		// R5.7-b: set of currently-expanded tree parent publicIds. Loaded
+		// from localStorage on ensureRoot; persisted on every toggle.
+		// Same deviations-from-default pattern as expandedGroups.
+		expandedRows: null,
+		// R5.7-b: transient set of publicIds whose ancestors were
+		// auto-expanded because a search match reached one of their
+		// descendants. Cleared when state.query.search clears. Independent
+		// of expandedRows so clearing search restores the viewer's real
+		// expansion state.
+		searchAutoExpandedRows: null,
 	};
 
 	function bootstrap() {
@@ -324,6 +350,15 @@
 		} else if ( query.category !== 'all' && category !== query.category ) {
 			return false;
 		}
+		// R5.7-b: tree parents are structural containers, not editable
+		// records. Skip status / priority / fieldFamily filters for them
+		// — otherwise `status=available` would hide every parent (they
+		// carry status='unsupported') and orphan their leaves. Category
+		// (above) still applies so a parent inherits its group's
+		// category placement.
+		if ( isRepeaterParent( item ) ) {
+			return true;
+		}
 		if ( query.status && status !== query.status ) {
 			return false;
 		}
@@ -334,7 +369,47 @@
 	}
 
 	function filteredItems() {
-		return state.items.filter( itemMatchesFilters );
+		// R5.7-b: two-pass tree-aware filtering.
+		// 1) Apply the usual per-item filters (status/priority/category/
+		//    fieldFamily). Parents short-circuit past status/priority
+		//    (see itemMatchesFilters) so they survive as containers.
+		// 2) Hide any leaf whose parent is COLLAPSED (state.expandedRows
+		//    OR state.searchAutoExpandedRows). Parents whose ALL children
+		//    were filtered out by pass 1 also drop away so the drawer
+		//    doesn't show a bare parent with nothing to expand.
+		const passOne = state.items.filter( itemMatchesFilters );
+
+		const visibleByPublicId = {};
+		passOne.forEach( function ( item ) {
+			if ( item && item.publicId ) {
+				visibleByPublicId[ item.publicId ] = item;
+			}
+		} );
+
+		// Count each parent's visible children after pass one.
+		const childCountsByParent = {};
+		passOne.forEach( function ( item ) {
+			if ( isTreeChild( item ) && visibleByPublicId[ item.parentPublicId ] ) {
+				childCountsByParent[ item.parentPublicId ] =
+					( childCountsByParent[ item.parentPublicId ] || 0 ) + 1;
+			}
+		} );
+
+		return passOne.filter( function ( item ) {
+			// Hide a leaf when its parent is collapsed. If the parent
+			// was dropped by pass one entirely, the leaf survives as a
+			// top-level orphan (R5.7-b's degraded fallback).
+			if ( isTreeChild( item ) && visibleByPublicId[ item.parentPublicId ] ) {
+				if ( ! isRowExpanded( item.parentPublicId ) ) {
+					return false;
+				}
+			}
+			// Hide a parent whose visible children came to zero.
+			if ( isRepeaterParent( item ) && ! childCountsByParent[ item.publicId ] ) {
+				return false;
+			}
+			return true;
+		} );
 	}
 
 	function ensureRoot() {
@@ -349,6 +424,8 @@
 		// in-memory defaults without erroring the drawer.
 		state.viewMode = loadStoredViewMode();
 		state.expandedGroups = loadStoredExpandedGroups();
+		state.expandedRows = loadStoredExpandedRows();
+		state.searchAutoExpandedRows = {};
 
 		let root = document.getElementById( 'dbvc-ve-control-center' );
 
@@ -651,7 +728,16 @@
 		);
 		wrap.setAttribute( 'data-dbvc-ve-control-center-table-wrap', '1' );
 		const table = createElement( 'table', 'dbvc-ve-control-center__table' );
-		table.setAttribute( 'role', 'table' );
+		// R5.7-b: table gains ARIA role="tree" so parent/child rows'
+		// role="treeitem" have a proper containing tree. This is a11y
+		// enabling for the R5.7-b tree UI even in the interim state
+		// where no repeater curation records exist yet (tree with only
+		// top-level items is still a valid tree).
+		table.setAttribute( 'role', 'tree' );
+		table.setAttribute(
+			'aria-label',
+			text( 'controlCenterTitle', 'Global Brand Controls' )
+		);
 		const thead = createElement( 'thead', 'dbvc-ve-control-center__thead' );
 		const headerRow = document.createElement( 'tr' );
 		const th1 = createElement(
@@ -835,6 +921,11 @@
 		}
 		root.dataset.controlCenterBound = '1';
 		root.addEventListener( 'click', handleClick );
+		// R5.7-b: keyboard nav for the tree. ArrowRight/Left on a parent
+		// row toggles expand; ArrowUp/Down moves focus between visible
+		// rows. Enter/Space on the disclosure button already toggles via
+		// native `<button>` semantics + the click delegate above.
+		root.addEventListener( 'keydown', handleTreeKeydown );
 		root.addEventListener( 'input', handleInput );
 	}
 
@@ -893,6 +984,102 @@
 			setViewMode( action.getAttribute( 'data-view-mode' ) || 'category' );
 		} else if ( name === 'toggle-group' ) {
 			toggleGroup( action.getAttribute( 'data-group-key' ) || '' );
+		} else if ( name === 'toggle-tree-row' ) {
+			toggleTreeRow( action.getAttribute( 'data-public-id' ) || '' );
+		} else if ( name === 'open-palette-bulk' ) {
+			// R5.later-b (2026-09-05): dispatch to overlay-app.js which
+			// mounts the full-attention modal popover (Option Y). The
+			// drawer doesn't own the modal itself — overlay-app is the
+			// single owner of "descriptor-editing surfaces" (side panel
+			// + this modal), so the drawer just kicks the event.
+			const publicId = action.getAttribute( 'data-public-id' ) || '';
+			if ( publicId ) {
+				try {
+					document.dispatchEvent(
+						new CustomEvent(
+							'dbvc:visual-editor:open-palette-bulk',
+							{
+								detail: { publicId: publicId },
+								bubbles: true,
+							}
+						)
+					);
+				} catch ( err ) {
+					/* IE11 CustomEvent fallback — not supported per D-058. */
+				}
+			}
+		}
+	}
+
+	// R5.7-b: Notion-pattern keyboard navigation on the tree. Scoped
+	// to interactions inside a `.dbvc-ve-control-center__row` so
+	// non-tree keyboard use (search input, tab strip) stays untouched.
+	function handleTreeKeydown( event ) {
+		const key = event.key;
+		if (
+			key !== 'ArrowUp' &&
+			key !== 'ArrowDown' &&
+			key !== 'ArrowLeft' &&
+			key !== 'ArrowRight'
+		) {
+			return;
+		}
+		const target = event.target;
+		if ( ! target || typeof target.closest !== 'function' ) {
+			return;
+		}
+		const row = target.closest( '.dbvc-ve-control-center__row' );
+		if ( ! row || ! state.root || ! state.root.contains( row ) ) {
+			return;
+		}
+		const publicId = row.getAttribute( 'data-public-id' ) || '';
+		const isParent = row.classList.contains( 'is-parent' );
+		const isExpanded = row.classList.contains( 'is-expanded' );
+
+		if ( key === 'ArrowRight' && isParent && ! isExpanded ) {
+			event.preventDefault();
+			toggleTreeRow( publicId );
+			return;
+		}
+		if ( key === 'ArrowLeft' && isParent && isExpanded ) {
+			event.preventDefault();
+			toggleTreeRow( publicId );
+			return;
+		}
+		if ( key === 'ArrowDown' || key === 'ArrowUp' ) {
+			event.preventDefault();
+			focusAdjacentTreeRow( row, key === 'ArrowDown' ? 1 : -1 );
+		}
+	}
+
+	function focusAdjacentTreeRow( currentRow, direction ) {
+		if ( ! state.root ) {
+			return;
+		}
+		const wrap = state.root.querySelector(
+			'[data-dbvc-ve-control-center-table-wrap]'
+		);
+		if ( ! wrap ) {
+			return;
+		}
+		const rows = Array.prototype.slice.call(
+			wrap.querySelectorAll( '.dbvc-ve-control-center__row' )
+		);
+		if ( ! rows.length ) {
+			return;
+		}
+		const index = rows.indexOf( currentRow );
+		let next = index + direction;
+		while ( next >= 0 && next < rows.length ) {
+			const candidate = rows[ next ];
+			const focusable = candidate.querySelector(
+				'.dbvc-ve-control-center__row-disclosure, .dbvc-ve-control-center__action, .dbvc-ve-control-center__action--view'
+			);
+			if ( focusable && typeof focusable.focus === 'function' ) {
+				focusable.focus();
+				return;
+			}
+			next += direction;
 		}
 	}
 
@@ -965,6 +1152,177 @@
 			LS_KEY_EXPANDED_GROUPS,
 			JSON.stringify( Object.keys( state.expandedGroups ) )
 		);
+	}
+
+	// R5.7-b: mirror the expanded-groups pattern for tree-parent
+	// expansions. Same deviations-from-default rule: default state is
+	// COLLAPSED; the persisted set is the list of publicIds the viewer
+	// has explicitly opened. A new curation entry adding a repeater
+	// parent that wasn't seen last time correctly defaults to collapsed
+	// even if the viewer had other repeaters expanded.
+	function loadStoredExpandedRows() {
+		const raw = readStoredString( LS_KEY_EXPANDED_ROWS );
+		if ( ! raw ) {
+			return {};
+		}
+		try {
+			const parsed = JSON.parse( raw );
+			if ( ! Array.isArray( parsed ) ) {
+				return {};
+			}
+			const out = {};
+			parsed.forEach( function ( entry ) {
+				if ( typeof entry === 'string' && entry ) {
+					out[ entry ] = true;
+				}
+			} );
+			return out;
+		} catch ( _err ) {
+			return {};
+		}
+	}
+
+	function persistExpandedRows() {
+		if ( ! state.expandedRows ) {
+			return;
+		}
+		writeStoredString(
+			LS_KEY_EXPANDED_ROWS,
+			JSON.stringify( Object.keys( state.expandedRows ) )
+		);
+	}
+
+	// R5.7-b: tree-model helpers. Records whose `meta.role` is in
+	// `TREE_PARENT_ROLES` (`repeater_parent` from R5.7-a, `palette` from
+	// R5.later-a) are drawn as tree parents (disclosure triangle +
+	// row-count chip, no Open button); records with a non-empty
+	// `parentPublicId` are their children. Children are hidden from the
+	// visible list when their parent is collapsed. Search auto-expands
+	// ancestors of matches. The name `isRepeaterParent` is kept for
+	// R5.7-b call-site stability — it now recognises every tree-parent
+	// role, not repeater parents specifically.
+	function isRepeaterParent( item ) {
+		if (
+			! item ||
+			! item.meta ||
+			typeof item.meta !== 'object' ||
+			typeof item.meta.role !== 'string'
+		) {
+			return false;
+		}
+		return TREE_PARENT_ROLES.indexOf( item.meta.role ) !== -1;
+	}
+
+	function isTreeChild( item ) {
+		return !! ( item && typeof item.parentPublicId === 'string' && item.parentPublicId );
+	}
+
+	function isRowExpanded( publicId ) {
+		if ( ! publicId ) {
+			return false;
+		}
+		if ( state.expandedRows && state.expandedRows[ publicId ] ) {
+			return true;
+		}
+		if (
+			state.searchAutoExpandedRows &&
+			state.searchAutoExpandedRows[ publicId ]
+		) {
+			return true;
+		}
+		return false;
+	}
+
+	function toggleTreeRow( publicId ) {
+		if ( ! publicId ) {
+			return;
+		}
+		if ( ! state.expandedRows ) {
+			state.expandedRows = {};
+		}
+		if ( state.expandedRows[ publicId ] ) {
+			delete state.expandedRows[ publicId ];
+		} else {
+			state.expandedRows[ publicId ] = true;
+		}
+		persistExpandedRows();
+		renderList();
+		// Restore focus onto the toggled parent's disclosure so keyboard
+		// nav stays on the row the viewer just expanded / collapsed.
+		if ( state.root ) {
+			const restored = state.root.querySelector(
+				'[data-dbvc-ve-control-center-action="toggle-tree-row"][data-public-id="' +
+					cssEscape( publicId ) +
+					'"]'
+			);
+			if ( restored && typeof restored.focus === 'function' ) {
+				restored.focus();
+			}
+		}
+	}
+
+	// R5.7-b: given the sorted items array, return a map of
+	// `parentPublicId → [child items]` so callers can look up a
+	// parent's children in one pass.
+	function buildParentChildIndex( items ) {
+		const index = {};
+		items.forEach( function ( item ) {
+			if ( isTreeChild( item ) ) {
+				const key = item.parentPublicId;
+				if ( ! index[ key ] ) {
+					index[ key ] = [];
+				}
+				index[ key ].push( item );
+			}
+		} );
+		return index;
+	}
+
+	// R5.7-b: search auto-expand. When the query is non-empty, walk
+	// every item; any leaf (or parent) whose label matches the query
+	// forces its ancestor chain into `state.searchAutoExpandedRows`.
+	// The rebuild happens on every renderList call so a search string
+	// change immediately re-computes the auto-expanded set.
+	function recomputeSearchAutoExpansion( items ) {
+		state.searchAutoExpandedRows = {};
+		const query = ( state.query.search || '' ).toString().trim();
+		if ( ! query ) {
+			return;
+		}
+		const needle = query.toLowerCase();
+		const publicIdIndex = {};
+		items.forEach( function ( item ) {
+			if ( item && item.publicId ) {
+				publicIdIndex[ item.publicId ] = item;
+			}
+		} );
+		items.forEach( function ( item ) {
+			if ( ! item ) {
+				return;
+			}
+			const label = String( item.label || '' ).toLowerCase();
+			if ( label.indexOf( needle ) === -1 ) {
+				return;
+			}
+			// If the matching item is itself a parent, expand it so its
+			// children stay visible under the search.
+			if ( isRepeaterParent( item ) && item.publicId ) {
+				state.searchAutoExpandedRows[ item.publicId ] = true;
+			}
+			// Walk ancestors up via parentPublicId; mark each as expanded.
+			let cursor = item;
+			const seen = {};
+			while (
+				cursor &&
+				typeof cursor.parentPublicId === 'string' &&
+				cursor.parentPublicId &&
+				! seen[ cursor.parentPublicId ]
+			) {
+				seen[ cursor.parentPublicId ] = true;
+				state.searchAutoExpandedRows[ cursor.parentPublicId ] = true;
+				cursor = publicIdIndex[ cursor.parentPublicId ];
+			}
+		} );
 	}
 
 	function setViewMode( mode ) {
@@ -1080,6 +1438,39 @@
 	// removed from the DOM. Reduced-motion viewers get the same total
 	// duration but the CSS transition itself is suppressed.
 	const SAVE_STATUS_STRIP_MS = 2500;
+
+	// R5.later-y (2026-09-04): the palette overview panel controller
+	// dispatches this event when a swatch is clicked. Route to the
+	// existing `openRow(publicId)` so the leaf's own single-color
+	// panel takes over the panel slot. Guards: drawer must be open;
+	// publicId must be a non-empty string; publicId must exist in the
+	// current items list (defensive — a stale event carrying a
+	// publicId no longer registered simply no-ops).
+	function handleOpenControlRequest( event ) {
+		if ( ! isOpen() ) {
+			return;
+		}
+		const detail =
+			event && event.detail && typeof event.detail === 'object'
+				? event.detail
+				: {};
+		const publicId =
+			typeof detail.publicId === 'string' && detail.publicId
+				? detail.publicId
+				: '';
+		if ( ! publicId ) {
+			return;
+		}
+		const items =
+			state.items && Array.isArray( state.items ) ? state.items : [];
+		const exists = items.some( function ( item ) {
+			return item && item.publicId === publicId;
+		} );
+		if ( ! exists ) {
+			return; // stale event; the leaf is no longer in the current list
+		}
+		openRow( publicId );
+	}
 
 	function handlePanelSaved( event ) {
 		const detail =
@@ -1535,6 +1926,27 @@
 					( on ? ' is-on' : '' )
 			);
 			chip.setAttribute( 'title', label );
+			chip.appendChild( document.createTextNode( label ) );
+			return chip;
+		}
+		if ( family === 'date' ) {
+			// R5.5: compact ISO date chip. Server sends `{iso, label}` —
+			// label defaults to the ISO for MVP (a locale-formatted
+			// variant is a future polish slice). We render the label as
+			// the visible text and set the ISO as the title tooltip so
+			// automation / screen readers can grab the canonical value.
+			const iso = typeof summary.iso === 'string' ? summary.iso : '';
+			if ( iso === '' ) {
+				return null;
+			}
+			const label = typeof summary.label === 'string' && summary.label
+				? summary.label
+				: iso;
+			const chip = createElement(
+				'span',
+				'dbvc-ve-control-center__value-date'
+			);
+			chip.setAttribute( 'title', iso );
 			chip.appendChild( document.createTextNode( label ) );
 			return chip;
 		}
@@ -2082,6 +2494,11 @@
 		if ( ! state.root ) {
 			return;
 		}
+		// R5.7-b: compute the search-auto-expansion set before filtering
+		// so parents with a matching descendant expand in the current
+		// render pass (Notion pattern). Recomputed on every render so a
+		// search-string change immediately re-shapes the tree.
+		recomputeSearchAutoExpansion( state.items );
 		renderViewToggle();
 		renderTabs();
 		renderFilters();
@@ -2245,9 +2662,19 @@
 		const priority = priorityFromItem( item );
 		const fieldFamily = classifyFieldFamily( item.fieldFamily );
 		const publicId = sanitizeAttr( item.publicId );
+		// R5.7-b: tree parents (repeater_parent) get a disclosure
+		// triangle + row-count chip in place of the Open button. Tree
+		// children get a nesting-level class + ARIA level for indent
+		// styling + a11y. Everything else renders as before.
+		const treeParent = isRepeaterParent( item );
+		const treeChild = isTreeChild( item );
+		const treeExpanded = treeParent && isRowExpanded( publicId );
 		const row = createElement(
 			'tr',
-			'dbvc-ve-control-center__row is-' + status
+			'dbvc-ve-control-center__row is-' + status +
+				( treeParent ? ' is-parent' : '' ) +
+				( treeChild ? ' is-child' : '' ) +
+				( treeExpanded ? ' is-expanded' : '' )
 		);
 		row.setAttribute( 'data-public-id', publicId );
 		row.setAttribute(
@@ -2257,6 +2684,14 @@
 		row.setAttribute( 'data-status', status );
 		if ( priority ) {
 			row.setAttribute( 'data-priority', priority );
+		}
+		// R5.7-b — ARIA tree semantics. Every row is a treeitem;
+		// parents advertise aria-expanded; child depth is
+		// aria-level=2 (level 1 = parent, level 2 = leaf).
+		row.setAttribute( 'role', 'treeitem' );
+		row.setAttribute( 'aria-level', treeChild ? '2' : '1' );
+		if ( treeParent ) {
+			row.setAttribute( 'aria-expanded', treeExpanded ? 'true' : 'false' );
 		}
 		row.setAttribute( 'data-field-family', fieldFamily );
 		if ( state.activePublicId && state.activePublicId === publicId ) {
@@ -2271,6 +2706,14 @@
 			'dbvc-ve-control-center__row-cell dbvc-ve-control-center__row-cell--label'
 		);
 		labelCell.setAttribute( 'data-label', 'Control' );
+		// R5.7-b: prepend a disclosure triangle for tree parents so
+		// keyboard + click both target the same interactive element.
+		// Chevron rotation reflects `[aria-expanded]` state.
+		if ( treeParent ) {
+			labelCell.appendChild(
+				renderTreeDisclosure( publicId, treeExpanded, item )
+			);
+		}
 		const dot = createElement(
 			'span',
 			'dbvc-ve-control-center__status-dot dbvc-ve-control-center__status-dot--' +
@@ -2319,18 +2762,168 @@
 			'dbvc-ve-control-center__row-cell dbvc-ve-control-center__row-cell--action'
 		);
 		actionCell.setAttribute( 'data-label', 'Action' );
-		// R4-C-1b: `.__value-summary` slot sits before the action button.
-		// Populated lazily via IntersectionObserver → batch POST. For rows
-		// whose status is not `available`, the slot renders empty (only
-		// available rows have descriptors + capabilities to source a value
-		// from). A cached summary renders synchronously; a cache miss
-		// leaves the slot empty until the observer fires.
-		actionCell.appendChild( renderValueSummarySlot( item, status, publicId ) );
-		actionCell.appendChild( renderAction( item, status, publicId ) );
+		// R5.7-b: tree parents render a row-count chip in place of the
+		// Open button — they have no editable descriptor of their own,
+		// only their children do. Chip mirrors the R4-C-2 group-count
+		// visual, with a plural-aware label from i18n.
+		//
+		// R5.later-y (2026-09-04): palette parents are the exception.
+		// They also render the child-count chip (still tree parents),
+		// but additionally render the Open button when `status` is
+		// `available` — clicking Open launches the palette overview
+		// panel (swatch grid + per-swatch navigation to individual
+		// colors). Repeater parents remain tree-only (no descriptor).
+		if ( treeParent ) {
+			const childCount =
+				item.meta && typeof item.meta === 'object'
+					? Number( item.meta.childCount || 0 )
+					: 0;
+			actionCell.appendChild(
+				renderTreeChildCountChip( childCount )
+			);
+			// R5.later-y: palette-role tree parents that flipped to
+			// `status='available'` (Vertical provider R5.later-y)
+			// additionally render the Open button here. The
+			// `renderAction` helper is unchanged — it opens the row
+			// via the existing Open route, which returns the
+			// palette_grid descriptor minted by
+			// `buildPaletteOverviewDescriptor`.
+			const isPaletteRole =
+				item.meta &&
+				typeof item.meta === 'object' &&
+				item.meta.role === 'palette';
+			if ( isPaletteRole && status === 'available' && publicId ) {
+				actionCell.appendChild( renderAction( item, status, publicId ) );
+				// R5.later-b (2026-09-05): a second surface for palette
+				// editing — an "Expand" button that opens a full-attention
+				// modal popover (Option Y from the design review). The
+				// side-panel Open (above) stays as Option Z (compact
+				// side-by-side); the popover is for full-focus bulk
+				// palette work with per-swatch Copy-hex + a Copy-all-as-
+				// CSS-variables header action. Dispatches an event that
+				// overlay-app.js listens for and mounts the modal from.
+				actionCell.appendChild(
+					renderPaletteExpandAction( item, publicId )
+				);
+			}
+		} else {
+			// R4-C-1b: `.__value-summary` slot sits before the action button.
+			// Populated lazily via IntersectionObserver → batch POST. For rows
+			// whose status is not `available`, the slot renders empty (only
+			// available rows have descriptors + capabilities to source a value
+			// from). A cached summary renders synchronously; a cache miss
+			// leaves the slot empty until the observer fires.
+			actionCell.appendChild(
+				renderValueSummarySlot( item, status, publicId )
+			);
+			actionCell.appendChild( renderAction( item, status, publicId ) );
+		}
 
 		row.appendChild( labelCell );
 		row.appendChild( actionCell );
 		return row;
+	}
+
+	// R5.7-b: interactive disclosure triangle for a tree-parent row.
+	// Rendered as a <button> so keyboard (Enter/Space) triggers the
+	// click handler naturally, and screen readers announce the
+	// expand/collapse state via aria-expanded + aria-label. The click
+	// delegate on the root reads `data-dbvc-ve-control-center-action=
+	// toggle-tree-row` + `data-public-id`.
+	function renderTreeDisclosure( publicId, isExpanded, item ) {
+		const disclosure = createElement(
+			'button',
+			'dbvc-ve-control-center__row-disclosure' +
+				( isExpanded ? ' is-expanded' : '' )
+		);
+		disclosure.type = 'button';
+		disclosure.setAttribute(
+			'data-dbvc-ve-control-center-action',
+			'toggle-tree-row'
+		);
+		disclosure.setAttribute( 'data-public-id', publicId );
+		disclosure.setAttribute( 'aria-expanded', isExpanded ? 'true' : 'false' );
+		const label = templateText(
+			isExpanded
+				? 'controlCenterTreeCollapse'
+				: 'controlCenterTreeExpand',
+			isExpanded ? 'Collapse {name}' : 'Expand {name}',
+			{ name: sanitizeAttr( ( item && item.label ) || '' ) }
+		);
+		disclosure.setAttribute( 'aria-label', label );
+		disclosure.setAttribute( 'title', label );
+		const chevron = createElement(
+			'span',
+			'dbvc-ve-control-center__row-disclosure-icon',
+			'▸'
+		);
+		chevron.setAttribute( 'aria-hidden', 'true' );
+		disclosure.appendChild( chevron );
+		return disclosure;
+	}
+
+	function renderTreeChildCountChip( count ) {
+		const chip = createElement(
+			'span',
+			'dbvc-ve-control-center__row-childcount'
+		);
+		const safeCount = Math.max( 0, Math.floor( Number( count ) || 0 ) );
+		const label =
+			safeCount === 1
+				? templateText(
+						'controlCenterTreeChildCountOne',
+						'{count} row',
+						{ count: safeCount }
+				  )
+				: templateText(
+						'controlCenterTreeChildCountMany',
+						'{count} rows',
+						{ count: safeCount }
+				  );
+		chip.textContent = label;
+		return chip;
+	}
+
+	// R5.later-b (2026-09-05): Expand-palette action button rendered
+	// on palette-role tree parents alongside the standard Open button.
+	// Clicking dispatches `dbvc:visual-editor:open-palette-bulk` with
+	// the parent's publicId; overlay-app.js listens and mounts a full-
+	// attention modal popover (Option Y — dedicated popup) that reuses
+	// the R5.later-y-2 palette-overview save infrastructure but at a
+	// larger canvas with per-cell Copy-hex + copy-all-as-CSS-variables
+	// affordances. The compact side-panel Open (Option Z) stays as the
+	// default one-click surface; Expand is the deliberate "give me the
+	// whole palette in one place" affordance.
+	function renderPaletteExpandAction( item, publicId ) {
+		const button = createElement(
+			'button',
+			'dbvc-ve-control-center__row-expand'
+		);
+		button.type = 'button';
+		button.setAttribute(
+			'data-dbvc-ve-control-center-action',
+			'open-palette-bulk'
+		);
+		button.setAttribute( 'data-public-id', publicId );
+		const label = templateText(
+			'controlCenterPaletteExpand',
+			'Expand {name}',
+			{ name: sanitizeAttr( ( item && item.label ) || '' ) }
+		);
+		button.setAttribute( 'aria-label', label );
+		button.setAttribute( 'title', label );
+		// Compact "expand" icon — two arrows pushing outward. Reduces
+		// visual weight vs adding a full second text button, which
+		// would crowd the row.
+		button.innerHTML =
+			'<span class="dbvc-ve-control-center__row-expand-icon" aria-hidden="true">' +
+			'<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+			'<polyline points="15 3 21 3 21 9"/>' +
+			'<polyline points="9 21 3 21 3 15"/>' +
+			'<line x1="21" y1="3" x2="14" y2="10"/>' +
+			'<line x1="3" y1="21" x2="10" y2="14"/>' +
+			'</svg></span>';
+		return button;
 	}
 
 	function registerVisibleValueSummaryTargets( wrap ) {
@@ -3048,6 +3641,16 @@
 		document.addEventListener(
 			'dbvc:visual-editor:panel:saved',
 			handlePanelSaved
+		);
+		// R5.later-y (2026-09-04): overlay-app.js's palette overview
+		// controller dispatches this when a swatch is clicked in the
+		// palette panel. The drawer routes to `openRow(publicId)` so
+		// the leaf's own single-color panel takes over the panel slot
+		// via the existing R5.2+color_picker path. No new save
+		// authority — this is pure client-side navigation.
+		document.addEventListener(
+			'dbvc:visual-editor:open-control',
+			handleOpenControlRequest
 		);
 		document.addEventListener( 'keydown', handleKeydown, true );
 

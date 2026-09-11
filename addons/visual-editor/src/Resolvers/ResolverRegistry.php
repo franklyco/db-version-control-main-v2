@@ -76,6 +76,10 @@ final class ResolverRegistry
             // true_false — routes ACF boolean fields to the panel's
             // createBooleanController (checkbox + label).
             new AcfTrueFalseResolver(),
+            // R5.5 — routes ACF date_picker fields to the panel's
+            // native `<input type="date">` controller (via
+            // createInputController('date', value) — no new controller).
+            new AcfDatePickerResolver(),
             new AcfLinkResolver(),
             new AcfImageResolver(),
             new AcfGalleryResolver(),

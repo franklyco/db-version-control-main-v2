@@ -46,7 +46,20 @@
     }
 
     function readRowDecision(row) {
-        var decision = { decision: '', client_priority: '', category: '', notes: '' };
+        // R5.later-a.3 + R5.later-a.6: `palette_group_key` and
+        // `palette_display_label` starters default to '' so a curator
+        // clearing either field sends the empty value (unset) rather than
+        // omitting the key (preserve — CurationStore.setDecision merges,
+        // so an omitted key would leave any previous value in place,
+        // which is not what "cleared" should mean).
+        var decision = {
+            decision: '',
+            client_priority: '',
+            category: '',
+            notes: '',
+            palette_group_key: '',
+            palette_display_label: ''
+        };
         var fields = row.querySelectorAll('[data-dbvc-ve-curation="field"]');
         fields.forEach(function (input) {
             var name = input.dataset.field;

@@ -583,6 +583,48 @@ abstract class AbstractAcfResolver implements ResolverInterface
     }
 
     /**
+     * R5.7-a — Concurrent-reorder / concurrent-edit guard for
+     * repeater-subfield writes. When the descriptor carries an
+     * `expected_row_signature` (minted at descriptor-mint time by
+     * {@see \Dbvc\VisualEditor\Registry\Providers\SharedGlobalsDescriptorFactory::buildRepeaterSubfieldDescriptor}),
+     * compare it against a freshly-computed signature of the currently
+     * resolved row. A mismatch means the row has drifted between mint
+     * and save — reject the write with a structured error the panel
+     * can surface, rather than silently mis-writing to the wrong slot.
+     *
+     * Descriptors without an `expected_row_signature` skip the check
+     * (legacy pre-R5.7 repeater-subfield writes, or callers that
+     * intentionally opt out of the guard).
+     *
+     * @param EditableDescriptor    $descriptor
+     * @param array<string, mixed>  $row Current row data at the
+     *                              resolved row_index.
+     * @return array<string, mixed> `['ok' => true]` on match / no
+     *                              signature; structured error
+     *                              `['ok' => false, 'message' => ...,
+     *                              'code' => 'concurrent_reorder_detected']`
+     *                              on mismatch.
+     */
+    protected function verifyExpectedRowSignature(EditableDescriptor $descriptor, array $row)
+    {
+        $expected = isset($descriptor->source['expected_row_signature'])
+            ? (string) $descriptor->source['expected_row_signature']
+            : '';
+        if ($expected === '') {
+            return ['ok' => true];
+        }
+        $current = \Dbvc\VisualEditor\Registry\Providers\SharedGlobalsControlProvider::buildRepeaterRowSignature($row);
+        if ($current === $expected) {
+            return ['ok' => true];
+        }
+        return [
+            'ok' => false,
+            'code' => 'concurrent_reorder_detected',
+            'message' => __('This repeater row changed since you opened it. Refresh and try again.', 'dbvc'),
+        ];
+    }
+
+    /**
      * @param EditableDescriptor $descriptor
      * @return string
      */
@@ -708,6 +750,20 @@ abstract class AbstractAcfResolver implements ResolverInterface
         $path_validation = $this->validateExistingRowContainerPath($row, $descriptor);
         if (empty($path_validation['ok'])) {
             return $path_validation;
+        }
+
+        // R5.7-a — expected_row_signature guard. When the descriptor
+        // carries a signature (minted by SharedGlobalsDescriptorFactory::
+        // buildRepeaterSubfieldDescriptor at descriptor-mint time), the
+        // resolver re-computes the current row's signature and rejects
+        // the save on mismatch. This catches concurrent reorders /
+        // concurrent edits that would otherwise land the write on the
+        // wrong storage slot. Legacy descriptors without a signature
+        // skip the check (backwards-compatible with pre-R5.7 code paths
+        // that also route through writeRepeaterSubfieldValue).
+        $signature_check = $this->verifyExpectedRowSignature($descriptor, $row);
+        if (empty($signature_check['ok'])) {
+            return $signature_check;
         }
 
         if ($this->shouldUsePostMetaRepeaterFallback($descriptor)) {

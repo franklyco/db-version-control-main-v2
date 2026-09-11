@@ -1725,6 +1725,462 @@ textarea.dbvc-ve-panel__input--textlike {
   appearance: none;
 }
 
+/* R5.later-y (2026-09-04): palette overview panel.
+   Renders a responsive CSS grid of swatch buttons — clicking a
+   swatch dispatches an `open-control` event with that leaf's
+   publicId, and the drawer routes to the leaf's own single-color
+   panel. Grid auto-fills at 120px min column width, so palettes of
+   2 fold to one row while palettes of 20 wrap naturally to fit the
+   panel width. */
+.dbvc-ve-panel__palette-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+}
+
+.dbvc-ve-panel__palette-overview-header {
+  margin: 0;
+  font-size: var(--dbvc-ve-font--meta);
+  color: var(--dbvc-ve-color-text-muted);
+  line-height: 1.4;
+}
+
+.dbvc-ve-panel__palette-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.dbvc-ve-panel__palette-overview-empty {
+  margin: 0;
+  padding: 12px;
+  font-size: var(--dbvc-ve-font--meta);
+  color: var(--dbvc-ve-color-text-muted);
+  text-align: center;
+  border: 1px dashed var(--dbvc-ve-color-border);
+  border-radius: var(--dbvc-ve-border-radius--s);
+}
+
+.dbvc-ve-panel__palette-overview-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 8px;
+  background: var(--dbvc-ve-color-surface);
+  border: 1px solid var(--dbvc-ve-color-border);
+  border-radius: var(--dbvc-ve-border-radius--s);
+  cursor: pointer;
+  font: inherit;
+  color: var(--dbvc-ve-color-text-dark);
+  text-align: left;
+  transition: border-color 120ms ease, transform 120ms ease;
+  /* R5.later-y-2: cell is now a `<label>` wrapping a live color input,
+     not a `<button>`. `position: relative` anchors the transparent
+     input over the visible swatch. */
+  position: relative;
+}
+
+.dbvc-ve-panel__palette-overview-cell:hover {
+  border-color: var(--dbvc-ve-color-primary, currentColor);
+  transform: translateY(-1px);
+}
+
+.dbvc-ve-panel__palette-overview-cell:focus-within {
+  outline: 2px solid var(--dbvc-ve-color-focus-ring, currentColor);
+  outline-offset: 2px;
+}
+
+/* R5.later-y-2: per-cell save state transitions. Border colour reflects
+   pending/saved/error so the user gets immediate visual feedback per
+   swatch. `data-state` is set by the controller. */
+.dbvc-ve-panel__palette-overview-cell[data-state="saving"] {
+  border-color: var(--dbvc-ve-color-warning, #b08800);
+}
+.dbvc-ve-panel__palette-overview-cell[data-state="saved"] {
+  border-color: var(--dbvc-ve-color-success, #2a8b48);
+}
+.dbvc-ve-panel__palette-overview-cell[data-state="error"] {
+  border-color: var(--dbvc-ve-color-danger, #b34747);
+}
+
+/* R5.later-y-2: swatch wrapper anchors the transparent color input
+   over the visible swatch. Clicking anywhere on the swatch opens the
+   browser's native color picker at that swatch's position. */
+.dbvc-ve-panel__palette-overview-swatch-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 56px;
+}
+
+.dbvc-ve-panel__palette-overview-swatch {
+  display: block;
+  width: 100%;
+  height: 56px;
+  border-radius: var(--dbvc-ve-border-radius--xs, 3px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background-color: transparent;
+}
+
+/* R5.later-y-2: the native color input is layered on top of the visible
+   swatch. `opacity: 0` keeps it invisible while still catching clicks +
+   opening the picker; `pointer-events: auto` so the swatch remains
+   click-through-able onto the input. */
+.dbvc-ve-panel__palette-overview-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
+.dbvc-ve-panel__palette-overview-input:disabled {
+  cursor: not-allowed;
+}
+.dbvc-ve-panel__palette-overview-input:focus-visible {
+  outline: none;
+  /* Focus ring shows on the cell (via :focus-within) — no double ring. */
+}
+
+/* R5.later-y-2: per-cell save status text. Renders below the meta line.
+   `:empty` collapses the slot so the cell doesn't reserve space when
+   there's no state to show. */
+.dbvc-ve-panel__palette-overview-cell-status {
+  font-size: 10px;
+  color: var(--dbvc-ve-color-text-muted);
+  line-height: 1.3;
+  min-height: 0;
+}
+.dbvc-ve-panel__palette-overview-cell-status:empty {
+  display: none;
+}
+.dbvc-ve-panel__palette-overview-cell[data-state="saving"] .dbvc-ve-panel__palette-overview-cell-status {
+  color: var(--dbvc-ve-color-warning, #b08800);
+}
+.dbvc-ve-panel__palette-overview-cell[data-state="saved"] .dbvc-ve-panel__palette-overview-cell-status {
+  color: var(--dbvc-ve-color-success, #2a8b48);
+}
+.dbvc-ve-panel__palette-overview-cell[data-state="error"] .dbvc-ve-panel__palette-overview-cell-status {
+  color: var(--dbvc-ve-color-danger, #b34747);
+}
+
+.dbvc-ve-panel__palette-overview-swatch.is-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.04) 6px,
+    rgba(0, 0, 0, 0.02) 6px,
+    rgba(0, 0, 0, 0.02) 12px
+  );
+}
+
+.dbvc-ve-panel__palette-overview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dbvc-ve-panel__palette-overview-name {
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--bold);
+  color: var(--dbvc-ve-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dbvc-ve-panel__palette-overview-hex {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--dbvc-ve-color-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbvc-ve-panel__palette-overview-cell,
+  .dbvc-ve-panel__palette-overview-cell:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* R5.later-b (2026-09-05): dedicated palette-bulk popover (Option Y).
+   Full-attention modal opened by the Expand button on palette parent
+   rows. Reuses R5.later-y-2's save infrastructure per-swatch, but
+   surfaces at a larger canvas with per-cell Copy-hex + a
+   "Copy all as CSS variables" header action. */
+.dbvc-ve-palette-bulk-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 20, 30, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100000;
+  padding: 24px;
+  box-sizing: border-box;
+  animation: dbvc-ve-palette-bulk-fade-in 140ms ease-out;
+}
+@keyframes dbvc-ve-palette-bulk-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.dbvc-ve-palette-bulk-popover {
+  background: var(--dbvc-ve-color-surface, #fff);
+  color: var(--dbvc-ve-color-text-dark, #1a1a1a);
+  border-radius: var(--dbvc-ve-border-radius--l, 8px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  width: min(880px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: var(--dbvc-ve-font--body, 14px);
+}
+
+.dbvc-ve-palette-bulk-popover__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--dbvc-ve-color-border, #e2e5eb);
+}
+
+.dbvc-ve-palette-bulk-popover__title {
+  margin: 0;
+  font-size: var(--dbvc-ve-font--body, 14px);
+  font-weight: var(--dbvc-ve-font-weight--bold, 600);
+  color: var(--dbvc-ve-color-secondary, #333);
+}
+
+.dbvc-ve-palette-bulk-popover__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dbvc-ve-palette-bulk-popover__copy-all {
+  padding: 6px 12px;
+  border: 1px solid var(--dbvc-ve-color-border, #d0d4dc);
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+  background: var(--dbvc-ve-color-surface, #fff);
+  color: var(--dbvc-ve-color-secondary, #333);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dbvc-ve-palette-bulk-popover__copy-all:hover {
+  border-color: var(--dbvc-ve-color-primary, currentColor);
+  background: rgba(0, 0, 0, 0.02);
+}
+.dbvc-ve-palette-bulk-popover__copy-all.is-hidden {
+  display: none;
+}
+
+.dbvc-ve-palette-bulk-popover__close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  cursor: pointer;
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dbvc-ve-palette-bulk-popover__close:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--dbvc-ve-color-secondary, #333);
+}
+.dbvc-ve-palette-bulk-popover__close:focus-visible {
+  outline: 2px solid var(--dbvc-ve-color-focus-ring, currentColor);
+  outline-offset: 2px;
+}
+
+.dbvc-ve-palette-bulk-popover__body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.dbvc-ve-palette-bulk-popover__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.dbvc-ve-palette-bulk-popover__empty {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  border: 1px dashed var(--dbvc-ve-color-border, #d0d4dc);
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+}
+
+.dbvc-ve-palette-bulk-popover__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--dbvc-ve-color-surface, #fff);
+  border: 1px solid var(--dbvc-ve-color-border, #e2e5eb);
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+  transition: border-color 120ms ease;
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="saving"] {
+  border-color: var(--dbvc-ve-color-warning, #b08800);
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="saved"] {
+  border-color: var(--dbvc-ve-color-success, #2a8b48);
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="error"] {
+  border-color: var(--dbvc-ve-color-danger, #b34747);
+}
+
+.dbvc-ve-palette-bulk-popover__swatch-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 96px;
+  cursor: pointer;
+}
+
+.dbvc-ve-palette-bulk-popover__swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--dbvc-ve-border-radius--xs, 3px);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+}
+.dbvc-ve-palette-bulk-popover__swatch.is-empty {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(0, 0, 0, 0.04),
+    rgba(0, 0, 0, 0.04) 6px,
+    rgba(0, 0, 0, 0.02) 6px,
+    rgba(0, 0, 0, 0.02) 12px
+  );
+}
+
+.dbvc-ve-palette-bulk-popover__input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+}
+.dbvc-ve-palette-bulk-popover__input:focus-visible + .dbvc-ve-palette-bulk-popover__swatch,
+.dbvc-ve-palette-bulk-popover__swatch-wrap:focus-within .dbvc-ve-palette-bulk-popover__swatch {
+  outline: 2px solid var(--dbvc-ve-color-focus-ring, currentColor);
+  outline-offset: 2px;
+}
+
+.dbvc-ve-palette-bulk-popover__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dbvc-ve-palette-bulk-popover__name {
+  font-size: 13px;
+  font-weight: var(--dbvc-ve-font-weight--bold, 600);
+  color: var(--dbvc-ve-color-secondary, #333);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dbvc-ve-palette-bulk-popover__hex {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  background: transparent;
+  padding: 0;
+}
+
+.dbvc-ve-palette-bulk-popover__cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dbvc-ve-palette-bulk-popover__copy {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--dbvc-ve-color-border, #d0d4dc);
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+  background: transparent;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  cursor: pointer;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+.dbvc-ve-palette-bulk-popover__copy:hover {
+  border-color: var(--dbvc-ve-color-primary, currentColor);
+  color: var(--dbvc-ve-color-secondary, #333);
+}
+.dbvc-ve-palette-bulk-popover__copy:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dbvc-ve-palette-bulk-popover__cell-status {
+  font-size: 10px;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  line-height: 1.3;
+}
+.dbvc-ve-palette-bulk-popover__cell-status:empty {
+  display: none;
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="saving"] .dbvc-ve-palette-bulk-popover__cell-status {
+  color: var(--dbvc-ve-color-warning, #b08800);
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="saved"] .dbvc-ve-palette-bulk-popover__cell-status {
+  color: var(--dbvc-ve-color-success, #2a8b48);
+}
+.dbvc-ve-palette-bulk-popover__cell[data-state="error"] .dbvc-ve-palette-bulk-popover__cell-status {
+  color: var(--dbvc-ve-color-danger, #b34747);
+}
+
+.dbvc-ve-palette-bulk-popover__status {
+  padding: 10px 20px;
+  min-height: 0;
+  font-size: 12px;
+  color: var(--dbvc-ve-color-text-muted, #666);
+  border-top: 1px solid var(--dbvc-ve-color-border, #e2e5eb);
+}
+.dbvc-ve-palette-bulk-popover__status:empty {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbvc-ve-palette-bulk-popover-backdrop {
+    animation: none;
+  }
+  .dbvc-ve-palette-bulk-popover__cell,
+  .dbvc-ve-palette-bulk-popover__copy,
+  .dbvc-ve-palette-bulk-popover__copy-all,
+  .dbvc-ve-palette-bulk-popover__close {
+    transition: none;
+  }
+}
+
 .dbvc-ve-panel__toolbar {
   display: flex;
   flex-wrap: wrap;

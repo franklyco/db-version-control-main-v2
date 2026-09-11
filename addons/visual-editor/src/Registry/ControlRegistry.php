@@ -363,7 +363,61 @@ final class ControlRegistry
             return strcmp($a->publicId(), $b->publicId());
         });
 
-        return $records;
+        return $this->flattenParentChildOrder($records);
+    }
+
+    /**
+     * R5.7-b — post-sort DFS flatten so records with `parentPublicId`
+     * pointing at another record in the same pass appear immediately
+     * after their parent, and children of the same parent stay in their
+     * sortKey / label / publicId order (they were already sorted before
+     * this step).
+     *
+     * Orphaned children (parentPublicId points at a non-existent
+     * publicId, or the parent is filtered out at read time) fall back
+     * to root position rather than being dropped — the drawer then
+     * renders them as top-level, which is a safer degradation than
+     * silently disappearing a record that the provider registered.
+     *
+     * The DFS runs to arbitrary depth so a future slice can nest deeper
+     * (grandchildren, etc.) without further changes here.
+     *
+     * @param array<int, ControlRecord> $sorted_records
+     * @return array<int, ControlRecord>
+     */
+    private function flattenParentChildOrder(array $sorted_records)
+    {
+        $by_public_id = [];
+        foreach ($sorted_records as $record) {
+            $by_public_id[$record->publicId()] = true;
+        }
+        $roots = [];
+        $children_of = [];
+        foreach ($sorted_records as $record) {
+            $parent = $record->parentPublicId;
+            if ($parent !== '' && isset($by_public_id[$parent])) {
+                if (! isset($children_of[$parent])) {
+                    $children_of[$parent] = [];
+                }
+                $children_of[$parent][] = $record;
+                continue;
+            }
+            $roots[] = $record;
+        }
+        $flat = [];
+        $emit = function (ControlRecord $node) use (&$emit, &$flat, &$children_of) {
+            $flat[] = $node;
+            $public_id = $node->publicId();
+            if (isset($children_of[$public_id])) {
+                foreach ($children_of[$public_id] as $child) {
+                    $emit($child);
+                }
+            }
+        };
+        foreach ($roots as $root) {
+            $emit($root);
+        }
+        return $flat;
     }
 
     /**

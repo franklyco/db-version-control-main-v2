@@ -399,6 +399,13 @@ final class SharedGlobalsControlProvider implements ControlProvider
             return self::buildBooleanSummary($value);
         }
 
+        // R5.5: date_picker summary — validate the stored ISO date via
+        // AcfDatePickerResolver::normalizeIsoDate and return `{family, iso,
+        // label}` for the compact date chip. Invalid / empty → null.
+        if ($field_type === 'date_picker') {
+            return self::buildDateSummary($value);
+        }
+
         // Relationship / post_object (R4-A path). Delegates to the
         // R5.4-added public static helper so Vertical rows can reuse the
         // exact same shape via the same source of truth.
@@ -682,6 +689,9 @@ final class SharedGlobalsControlProvider implements ControlProvider
             // true_false: AcfTrueFalseResolver — routes to
             // createBooleanController (checkbox + label).
             'true_false',
+            // R5.5: AcfDatePickerResolver — routes to a native
+            // `<input type="date">` via createInputController.
+            'date_picker',
         ];
     }
 
@@ -1013,6 +1023,30 @@ final class SharedGlobalsControlProvider implements ControlProvider
     }
 
     /**
+     * R5.5 — date_picker summary shape: `{family:'date', iso, label}`.
+     * Delegates to {@see \Dbvc\VisualEditor\Resolvers\AcfDatePickerResolver::normalizeIsoDate}
+     * so the "which shape is valid" contract stays single-sourced across
+     * validate / sanitize / summary. Empty / unrecognized → null so the
+     * drawer renders no chip. `label` for MVP mirrors the ISO string;
+     * a locale-formatted label variant is a future polish slice.
+     *
+     * @param mixed $value
+     * @return array<string, mixed>|null
+     */
+    public static function buildDateSummary($value)
+    {
+        $iso = \Dbvc\VisualEditor\Resolvers\AcfDatePickerResolver::normalizeIsoDate($value);
+        if ($iso === '') {
+            return null;
+        }
+        return [
+            'family' => 'date',
+            'iso' => $iso,
+            'label' => $iso,
+        ];
+    }
+
+    /**
      * R5.3 — coerce ACF image value shapes onto a positive integer
      * attachment id. Silent-drops non-resolvable values.
      *
@@ -1044,5 +1078,72 @@ final class SharedGlobalsControlProvider implements ControlProvider
             return $value->ID;
         }
         return 0;
+    }
+
+    /**
+     * R5.7-a — Deterministic signature of an ACF repeater row's data,
+     * used by SharedGlobalsDescriptorFactory to embed
+     * `source.expected_row_signature` at descriptor-mint time and by
+     * AbstractAcfResolver to re-verify at save time. A mismatch on save
+     * means the row has drifted between mint and save (concurrent
+     * reorder, concurrent edit, admin-side change) — the resolver
+     * rejects the write with a specific error rather than silently
+     * mis-writing.
+     *
+     * Implementation is stable across PHP array ordering: keys are
+     * sorted, nested arrays are recursively sorted, and any transient
+     * `acf_row_*` keys ACF might inject during admin flows are stripped.
+     * The hash is sha1 of the JSON encoding — deterministic across
+     * processes and independent of the caller's array insertion order.
+     *
+     * Public static so the Vertical provider can pre-compute signatures
+     * when emitting per-row records; SharedGlobalsDescriptorFactory
+     * consumes it directly.
+     *
+     * @param mixed $row Row data — normally an associative array of
+     *                   subfield → value. Non-array input returns ''.
+     * @return string 40-char sha1 hex, or '' for non-array input.
+     */
+    public static function buildRepeaterRowSignature($row)
+    {
+        if (! is_array($row)) {
+            return '';
+        }
+        $normalized = self::normalizeSignatureValue($row);
+        $encoded = wp_json_encode($normalized);
+        if (! is_string($encoded)) {
+            return '';
+        }
+        return sha1($encoded);
+    }
+
+    /**
+     * @param mixed $value
+     * @return mixed
+     */
+    private static function normalizeSignatureValue($value)
+    {
+        if (is_array($value)) {
+            $sorted = [];
+            foreach ($value as $k => $v) {
+                if (is_string($k) && strpos($k, 'acf_row_') === 0) {
+                    continue;
+                }
+                $sorted[$k] = self::normalizeSignatureValue($v);
+            }
+            if (! empty($sorted)) {
+                // sort by key for deterministic ordering; preserves
+                // sequential arrays because ksort of numeric keys is a
+                // no-op ordering-wise.
+                ksort($sorted);
+            }
+            return $sorted;
+        }
+        if (is_object($value)) {
+            // Object comparison is out of scope for row-signature use —
+            // ACF rows are always associative arrays.
+            return null;
+        }
+        return $value;
     }
 }

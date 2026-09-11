@@ -370,6 +370,12 @@ final class CurationPage
             $candidate['_decision'] = isset($decisions[$id]) ? $decisions[$id] : null;
             $candidate['_recommendation'] = $recommender->recommend($candidate);
             $candidate['_priority_rec'] = $recommender->recommendPriority($candidate);
+            // R5.later-a.5 — heuristic palette_group_key suggestion:
+            // color_picker records nested inside a group whose name
+            // contains "palette" auto-default to the parent's slug on
+            // export. Surfaced as the input's placeholder + a small
+            // "auto: {slug}" hint in the row render.
+            $candidate['_palette_group_key_suggested'] = $recommender->deriveSuggestedPaletteGroupKey($candidate);
             $out[] = $candidate;
         }
 
@@ -591,6 +597,7 @@ final class CurationPage
                     <col class="dbvc-ve-curation__col-priority-rec" style="width:7%" />
                     <col style="width:8%" />
                     <col style="width:auto" />
+                    <col style="width:9%" />
                 </colgroup>
                 <thead>
                     <tr>
@@ -609,17 +616,18 @@ final class CurationPage
                         <th class="dbvc-ve-curation__col-priority-rec"><?php esc_html_e('Suggested priority', 'dbvc'); ?></th>
                         <th><?php esc_html_e('Priority', 'dbvc'); ?></th>
                         <th><?php esc_html_e('Notes', 'dbvc'); ?></th>
+                        <th title="<?php esc_attr_e('R5.later-a: sibling color_picker records that share this key fold into one palette parent in the drawer. Leave blank for no grouping. Use lowercase / hyphens / underscores only (e.g. brand_primary, semantic-neutrals). Curator can also set Category or the Group field to control the palette parent’s display label.', 'dbvc'); ?>"><?php esc_html_e('Palette group', 'dbvc'); ?></th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($rows)) : ?>
-                        <tr><td colspan="13"><?php esc_html_e('No candidates discovered. Confirm the Visual Editor curation tool has ACF options-page groups to walk.', 'dbvc'); ?></td></tr>
+                        <tr><td colspan="14"><?php esc_html_e('No candidates discovered. Confirm the Visual Editor curation tool has ACF options-page groups to walk.', 'dbvc'); ?></td></tr>
                     <?php else : ?>
                         <?php foreach ($rows as $row) : ?>
                             <?php $this->renderRow($row, $categories); ?>
                         <?php endforeach; ?>
                         <tr class="dbvc-ve-curation__no-match-row" data-dbvc-ve-curation="no-match" hidden>
-                            <td colspan="13"><?php esc_html_e('No candidates match the current filters.', 'dbvc'); ?></td>
+                            <td colspan="14"><?php esc_html_e('No candidates match the current filters.', 'dbvc'); ?></td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -646,6 +654,29 @@ final class CurationPage
         $category_value = (string) ($decision['category'] ?? ($recommendation['category'] ?? ''));
         $priority_value = (string) ($decision['client_priority'] ?? '');
         $notes_value = (string) ($decision['notes'] ?? '');
+        $palette_group_key_value = (string) ($decision['palette_group_key'] ?? '');
+        // R5.later-a.5 — the recommender heuristically suggests a palette
+        // group slug for color_picker records nested inside a group whose
+        // name contains "palette". Surface the suggestion in the row's
+        // input placeholder + a small hint so curators see the auto
+        // behaviour + can override by typing.
+        $palette_group_key_suggested = isset($row['_palette_group_key_suggested'])
+            ? (string) $row['_palette_group_key_suggested']
+            : '';
+        $palette_group_key_using_auto = $palette_group_key_value === '' && $palette_group_key_suggested !== '';
+        // R5.later-a.6 — curator-set label override for the palette parent
+        // row in the drawer. When empty, the Vertical provider humanises
+        // the effective palette_group_key (`vertical_global_palette` →
+        // "Vertical Global Palette"). Setting this here overrides that
+        // humanised default with the curator's readable text.
+        $palette_display_label_value = (string) ($decision['palette_display_label'] ?? '');
+        // Compute the humanised default for the placeholder so the curator
+        // sees exactly what the parent row will read as if they leave the
+        // field blank. Effective key = curator override, else auto-suggest.
+        $palette_effective_key = $palette_group_key_value !== '' ? $palette_group_key_value : $palette_group_key_suggested;
+        $palette_display_label_default = $palette_effective_key !== ''
+            ? $this->humanisePaletteSlugPreview($palette_effective_key)
+            : '';
         $rec_value = (string) ($recommendation['recommendation'] ?? 'review');
         $rec_reasoning = (string) ($recommendation['reasoning'] ?? '');
         $priority_rec = isset($row['_priority_rec']) && is_array($row['_priority_rec']) ? $row['_priority_rec'] : [];
@@ -723,6 +754,41 @@ final class CurationPage
                 <textarea rows="2" data-dbvc-ve-curation="field" data-field="notes"><?php echo esc_textarea($notes_value); ?></textarea>
                 <span class="dbvc-ve-curation__row-status" data-dbvc-ve-curation="row-status" aria-live="polite"></span>
             </td>
+            <td>
+                <input
+                    type="text"
+                    class="dbvc-ve-curation__palette-key<?php echo $palette_group_key_using_auto ? ' is-auto' : ''; ?>"
+                    data-dbvc-ve-curation="field"
+                    data-field="palette_group_key"
+                    value="<?php echo esc_attr($palette_group_key_value); ?>"
+                    placeholder="<?php echo esc_attr($palette_group_key_suggested !== '' ? $palette_group_key_suggested : __('e.g. brand_primary', 'dbvc')); ?>"
+                    maxlength="40"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="<?php esc_attr_e('Palette group key (R5.later-a)', 'dbvc'); ?>"
+                />
+                <?php if ($palette_group_key_using_auto) : ?>
+                    <span class="dbvc-ve-curation__palette-key-hint" title="<?php esc_attr_e('R5.later-a.5: this color_picker sits inside a group whose name contains "palette". The exporter auto-defaults palette_group_key to the parent group slug so the drawer folds all sibling colors under one palette parent. Type an override to opt out of this auto-behaviour.', 'dbvc'); ?>">
+                        <?php
+                        /* translators: %s: auto-suggested palette group slug */
+                        printf(esc_html__('auto: %s', 'dbvc'), esc_html($palette_group_key_suggested));
+                        ?>
+                    </span>
+                <?php endif; ?>
+                <input
+                    type="text"
+                    class="dbvc-ve-curation__palette-label"
+                    data-dbvc-ve-curation="field"
+                    data-field="palette_display_label"
+                    value="<?php echo esc_attr($palette_display_label_value); ?>"
+                    placeholder="<?php echo esc_attr($palette_display_label_default !== '' ? $palette_display_label_default : __('Palette label override (optional)', 'dbvc')); ?>"
+                    maxlength="60"
+                    autocomplete="off"
+                    spellcheck="false"
+                    aria-label="<?php esc_attr_e('Palette display label override (R5.later-a.6)', 'dbvc'); ?>"
+                    title="<?php esc_attr_e('R5.later-a.6: override the palette parent’s drawer label. Empty falls back to the humanised palette group key (shown as placeholder). Set on any one child in the palette group — the first non-empty value wins.', 'dbvc'); ?>"
+                />
+            </td>
         </tr>
         <?php
     }
@@ -797,5 +863,35 @@ final class CurationPage
         }
 
         return implode(' › ', $parts);
+    }
+
+    /**
+     * R5.later-a.6 — humanise a palette group slug for the label-override
+     * input's placeholder so the curator sees exactly what the drawer's
+     * palette parent will read as when the override field is left blank.
+     * Mirrors the Vertical provider's `humanizePaletteGroupKey()` shape:
+     * split on `_`/`-`, title-case each segment, join with spaces.
+     *
+     * @param string $slug
+     * @return string
+     */
+    private function humanisePaletteSlugPreview($slug)
+    {
+        $slug = (string) $slug;
+        if ($slug === '') {
+            return '';
+        }
+        $parts = preg_split('/[_\-]+/', $slug);
+        if (! is_array($parts)) {
+            return ucfirst($slug);
+        }
+        $words = [];
+        foreach ($parts as $part) {
+            if ($part === '') {
+                continue;
+            }
+            $words[] = ucfirst(strtolower($part));
+        }
+        return implode(' ', $words);
     }
 }

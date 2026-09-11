@@ -1,6 +1,6 @@
 # Vertical — Brand Control Center approved controls
 
-_Exported 2026-08-28T01:08:34Z from Flourish Web Co.._
+_Exported 2026-09-04T23:04:18Z from Flourish Web Co.._
 
 **Counts:** 400 include · 370 defer · 0 ignore.
 
@@ -13,7 +13,7 @@ _Exported 2026-08-28T01:08:34Z from Flourish Web Co.._
 | R5.2+color_picker | 20 |
 | R5.3 | 37 |
 | R5.4 | 2 |
-| later | 1 |
+| never | 1 |
 
 ## R5.1
 
@@ -534,7 +534,7 @@ _Exported 2026-08-28T01:08:34Z from Flourish Web Co.._
 |---|---|---|---|---|---|
 | Menu Posts (WIP) | `settings_nav_menus>menus>menu_posts` | relationship | `advanced-settings` | should | — |
 
-## later
+## never
 
 ### Brand
 

@@ -5,6 +5,7 @@ namespace Dbvc\VisualEditor\Rest\Controllers;
 use Dbvc\VisualEditor\Context\EditModeState;
 use Dbvc\VisualEditor\Permissions\CapabilityManager;
 use Dbvc\VisualEditor\Registry\ControlRegistry;
+use Dbvc\VisualEditor\Registry\EditableDescriptor;
 use Dbvc\VisualEditor\Registry\EditableRegistry;
 use Dbvc\VisualEditor\Rest\DescriptorPayloadBuilder;
 use WP_REST_Request;
@@ -204,20 +205,52 @@ final class ControlCenterOpenController
             );
         }
 
+        // R5.later-y-3 (2026-09-05): a palette-parent descriptor can carry
+        // pre-minted leaf descriptors in `source.leaves[i].descriptor`.
+        // Register each in the session so subsequent per-swatch saves
+        // route through those tokens WITHOUT a separate `/open` call
+        // (first save per swatch drops from 2 round-trips to 1).
+        // Capability + exclusion checks are re-applied per leaf; a
+        // failed leaf is silently skipped rather than blocking the
+        // palette parent from opening.
+        $collected_descriptors = [$descriptor->token => $descriptor];
+        $leaves = isset($descriptor->source['leaves']) && is_array($descriptor->source['leaves'])
+            ? $descriptor->source['leaves']
+            : [];
+        foreach ($leaves as $leaf) {
+            if (! is_array($leaf) || empty($leaf['descriptor']) || ! is_array($leaf['descriptor'])) {
+                continue;
+            }
+            $leaf_descriptor = EditableDescriptor::fromArray($leaf['descriptor']);
+            if (! $leaf_descriptor->token) {
+                continue;
+            }
+            if (! $this->capabilities->canEditDescriptor($leaf_descriptor)) {
+                continue;
+            }
+            if (! $this->session_registry->addDescriptorToSession($session_id, $leaf_descriptor)) {
+                continue;
+            }
+            $collected_descriptors[$leaf_descriptor->token] = $leaf_descriptor;
+        }
+
         $payload = $this->payloads->build($descriptor);
-        $summary = $this->session_registry->exportPublicMap([$descriptor->token => $descriptor]);
-        $public = isset($summary[$descriptor->token]) ? $summary[$descriptor->token] : [];
+        $summary = $this->session_registry->exportPublicMap($collected_descriptors);
+
+        $descriptors_response = [];
+        $hydrations_response = [
+            $descriptor->token => array_merge(['ok' => true], $payload),
+        ];
+        foreach ($collected_descriptors as $token => $collected) {
+            $descriptors_response[$token] = isset($summary[$token]) ? $summary[$token] : [];
+        }
 
         return new WP_REST_Response(
             [
                 'ok' => true,
                 'publicId' => $record->publicId(),
-                'descriptors' => [
-                    $descriptor->token => $public,
-                ],
-                'descriptorHydrations' => [
-                    $descriptor->token => array_merge(['ok' => true], $payload),
-                ],
+                'descriptors' => $descriptors_response,
+                'descriptorHydrations' => $hydrations_response,
             ]
         );
     }

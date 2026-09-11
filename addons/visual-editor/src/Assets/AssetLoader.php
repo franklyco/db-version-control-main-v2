@@ -219,6 +219,38 @@ final class AssetLoader
                     // fallback when the server summary is unlocalized.
                     'panelBooleanOn' => __('On', 'dbvc'),
                     'panelBooleanOff' => __('Off', 'dbvc'),
+                    // R5.later-y (2026-09-04) — palette overview panel. Header
+                    // text pluralised via {count}; empty state fires when the
+                    // palette has no color leaves; per-cell aria-label
+                    // injects the color's {label} for screen-reader
+                    // disambiguation. R5.later-y-2 (2026-09-05) — updated
+                    // header wording to reflect inline auto-save (was
+                    // "Click a swatch to edit it individually" pre-R5.later-y-2)
+                    // and added per-cell save status announcements
+                    // (Saving… / Saved / Save failed) that populate the
+                    // aria-live status slot inside each cell.
+                    'panelPaletteOverviewHeaderOne' => __('{count} color in this palette. Each color saves automatically when changed.', 'dbvc'),
+                    'panelPaletteOverviewHeaderMany' => __('{count} colors in this palette. Each color saves automatically when changed.', 'dbvc'),
+                    'panelPaletteOverviewEmpty' => __('No colors in this palette yet.', 'dbvc'),
+                    'panelPaletteOverviewCellLabel' => __('Edit {label}', 'dbvc'),
+                    'panelPaletteOverviewCellSaving' => __('Saving…', 'dbvc'),
+                    'panelPaletteOverviewCellSaved' => __('Saved', 'dbvc'),
+                    'panelPaletteOverviewCellError' => __('Save failed', 'dbvc'),
+                    // R5.later-b (2026-09-05) — Option Y bulk-palette
+                    // popover. Full-attention modal surface for palette
+                    // editing at a larger canvas + per-swatch Copy-hex
+                    // + a Copy-all-as-CSS-variables header action.
+                    // `controlCenterPaletteExpand` labels the compact
+                    // Expand icon button on palette parent rows.
+                    'controlCenterPaletteExpand' => __('Expand {name}', 'dbvc'),
+                    'panelPaletteBulkLoading' => __('Loading palette…', 'dbvc'),
+                    'panelPaletteBulkFailed' => __('Could not load palette.', 'dbvc'),
+                    'panelPaletteBulkFallbackTitle' => __('Palette editor', 'dbvc'),
+                    'panelPaletteBulkClose' => __('Close palette editor', 'dbvc'),
+                    'panelPaletteBulkCopyHex' => __('Copy hex', 'dbvc'),
+                    'panelPaletteBulkCopyAll' => __('Copy all as CSS variables', 'dbvc'),
+                    'panelPaletteBulkCopied' => __('Copied to clipboard.', 'dbvc'),
+                    'panelPaletteBulkCopyFailed' => __('Could not copy to clipboard.', 'dbvc'),
                     'panelReady' => __('Select a marker to inspect or edit it.', 'dbvc'),
                     'panelSaved' => __('Saved successfully.', 'dbvc'),
                     'panelSource' => __('Source', 'dbvc'),
@@ -430,6 +462,13 @@ final class AssetLoader
                     'controlCenterGroupCollapse' => __('Collapse group', 'dbvc'),
                     'controlCenterGroupControlsCount' => __('{count} controls', 'dbvc'),
                     'controlCenterGroupUnnamed' => __('Other', 'dbvc'),
+                    // R5.7-b — tree row disclosure + row-count chip.
+                    // {name} is the parent row's label; keeps the aria-label
+                    // scannable ("Expand Menus" vs generic "Expand").
+                    'controlCenterTreeExpand' => __('Expand {name}', 'dbvc'),
+                    'controlCenterTreeCollapse' => __('Collapse {name}', 'dbvc'),
+                    'controlCenterTreeChildCountOne' => __('{count} row', 'dbvc'),
+                    'controlCenterTreeChildCountMany' => __('{count} rows', 'dbvc'),
                     'controlCenterProviderShared' => __('Shared Globals', 'dbvc'),
                     'controlCenterProviderVertical' => __('Vertical', 'dbvc'),
                     'controlCenterProviderUnknown' => __('Other', 'dbvc'),

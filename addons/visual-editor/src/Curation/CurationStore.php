@@ -20,6 +20,22 @@ final class CurationStore
     private const PRIORITIES = ['', 'must', 'should', 'nice'];
     private const CATEGORY_MAX_LENGTH = 60;
     private const NOTES_MAX_LENGTH = 500;
+    // R5.later-a — palette_group_key is a stable, machine-readable slug that
+    // groups sibling color_picker records under one synthetic palette parent
+    // in the Brand Control Center drawer. Sanitised via `sanitize_key` so it
+    // survives the store → export → provider trip verbatim and can safely
+    // become part of a publicId. 40 chars matches the drawer's practical
+    // parent-label width; longer keys read poorly in the tree UI regardless.
+    private const PALETTE_GROUP_KEY_MAX_LENGTH = 40;
+    // R5.later-a.6 — palette_display_label is a curator-set string that
+    // overrides the palette parent's drawer label (which otherwise falls
+    // back to the humanised slug of `palette_group_key`). Passed through
+    // `sanitize_text_field` so casing + spaces + punctuation survive
+    // ("Brand Colors" stays "Brand Colors", not "brand-colors"). Only one
+    // child in the palette group needs to carry the value; the Vertical
+    // provider's `countPaletteMembers` pre-scan picks the first non-empty
+    // seen. 60 chars matches the drawer's parent-row label width.
+    private const PALETTE_DISPLAY_LABEL_MAX_LENGTH = 60;
 
     /**
      * Return the full decision map. Every value is a normalized array
@@ -277,6 +293,32 @@ final class CurationStore
         }
         $normalized['notes'] = $notes;
 
+        // R5.later-a — palette_group_key is optional per-field opt-in for
+        // Vertical's palette grouping. Passed through sanitize_key so an
+        // ALL-CAPS or hyphenated curator input still lands as a canonical
+        // slug the provider can safely embed in a publicId. Absent = flat.
+        $palette_group_key = isset($decision['palette_group_key'])
+            ? sanitize_key((string) $decision['palette_group_key'])
+            : '';
+        if (strlen($palette_group_key) > self::PALETTE_GROUP_KEY_MAX_LENGTH) {
+            $palette_group_key = substr($palette_group_key, 0, self::PALETTE_GROUP_KEY_MAX_LENGTH);
+        }
+        $normalized['palette_group_key'] = $palette_group_key;
+
+        // R5.later-a.6 — palette_display_label is a curator-set override
+        // for the palette parent's drawer label. `sanitize_text_field`
+        // (not `sanitize_key`) preserves the readable casing / spacing /
+        // punctuation a curator would type ("Brand Colors" not
+        // "brand-colors"). Empty = fall back to humanised slug in the
+        // Vertical provider's `buildPaletteParentRecord`.
+        $palette_display_label = isset($decision['palette_display_label'])
+            ? sanitize_text_field((string) $decision['palette_display_label'])
+            : '';
+        if (strlen($palette_display_label) > self::PALETTE_DISPLAY_LABEL_MAX_LENGTH) {
+            $palette_display_label = substr($palette_display_label, 0, self::PALETTE_DISPLAY_LABEL_MAX_LENGTH);
+        }
+        $normalized['palette_display_label'] = $palette_display_label;
+
         $decided_at = isset($decision['decided_at']) ? absint($decision['decided_at']) : 0;
         $decided_by = isset($decision['decided_by']) ? absint($decision['decided_by']) : 0;
 
@@ -304,6 +346,8 @@ final class CurationStore
             'category' => '',
             'group' => '',
             'notes' => '',
+            'palette_group_key' => '',
+            'palette_display_label' => '',
             'decided_at' => 0,
             'decided_by' => 0,
         ];
@@ -319,6 +363,8 @@ final class CurationStore
             && ($decision['client_priority'] ?? '') === ''
             && ($decision['category'] ?? '') === ''
             && ($decision['group'] ?? '') === ''
-            && ($decision['notes'] ?? '') === '';
+            && ($decision['notes'] ?? '') === ''
+            && ($decision['palette_group_key'] ?? '') === ''
+            && ($decision['palette_display_label'] ?? '') === '';
     }
 }

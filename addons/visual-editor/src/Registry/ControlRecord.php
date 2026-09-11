@@ -115,6 +115,19 @@ final class ControlRecord
     public $sortKey;
 
     /**
+     * @var string R5.7-b — optional publicId of another record whose child
+     *             this record is in the drawer tree. Enables provider-shipped
+     *             hierarchy (e.g. repeater parent → per-row leaves). The
+     *             registry sorts children immediately after their parent so
+     *             the drawer's tree renderer can render them adjacent without
+     *             re-sorting the response array. Cross-provider links are
+     *             rejected at ingest — the parent MUST be from the same
+     *             provider as the child. Empty when the record is a root
+     *             (top-level in the tree).
+     */
+    public $parentPublicId;
+
+    /**
      * @param string $id
      * @param string $providerId
      * @param string $label
@@ -142,7 +155,8 @@ final class ControlRecord
         array $meta,
         $visibleTo,
         $description = '',
-        $sortKey = ''
+        $sortKey = '',
+        $parentPublicId = ''
     ) {
         $this->id = $id;
         $this->providerId = $providerId;
@@ -158,6 +172,7 @@ final class ControlRecord
         $this->visibleTo = $visibleTo;
         $this->description = (string) $description;
         $this->sortKey = (string) $sortKey;
+        $this->parentPublicId = (string) $parentPublicId;
     }
 
     /**
@@ -205,6 +220,7 @@ final class ControlRecord
             'fieldFamily' => $this->fieldFamily,
             'status' => $this->status,
             'sortKey' => $this->sortKey,
+            'parentPublicId' => $this->parentPublicId,
             'meta' => $this->meta,
         ];
     }
@@ -276,6 +292,21 @@ final class ControlRecord
         $description = sanitize_text_field((string) ($input['description'] ?? ''));
         $sort_key = sanitize_key((string) ($input['sortKey'] ?? ''));
 
+        // R5.7-b — parentPublicId is optional and provider-scoped. A
+        // parent must belong to the same provider as the child (no
+        // cross-provider tree links); a malformed / cross-provider
+        // value is silently dropped and the record still surfaces flat
+        // (the drawer treats an empty parentPublicId as "top-level").
+        $parent_public_id = '';
+        if (isset($input['parentPublicId']) && is_string($input['parentPublicId'])) {
+            $candidate = trim((string) $input['parentPublicId']);
+            $required_prefix = $sanitized_provider . ':';
+            if ($candidate !== '' && strpos($candidate, $required_prefix) === 0
+                && strlen($candidate) > strlen($required_prefix)) {
+                $parent_public_id = $candidate;
+            }
+        }
+
         return new self(
             $id,
             $sanitized_provider,
@@ -290,7 +321,8 @@ final class ControlRecord
             $meta,
             $visible_to,
             $description,
-            $sort_key
+            $sort_key,
+            $parent_public_id
         );
     }
 
@@ -315,7 +347,7 @@ final class ControlRecord
     {
         $out = [];
         foreach ($meta as $key => $value) {
-            $sanitized_key = sanitize_key((string) $key);
+            $sanitized_key = self::sanitizeMetaKey($key);
             if ($sanitized_key === '') {
                 continue;
             }
@@ -325,5 +357,24 @@ final class ControlRecord
         }
 
         return $out;
+    }
+
+    /**
+     * R5.7-b — case-preserving meta key sanitizer. `sanitize_key`
+     * lowercases which mangles frontend-visible camelCase keys
+     * (`childCount`, `rowIndex`, `unlocksAt`). Meta keys are provider
+     * emissions — they need to survive the server → drawer round trip
+     * with their original casing so the frontend can read them by name.
+     * Whitelisted charset: `[A-Za-z0-9_-]` — same alphabet
+     * `sanitize_key` accepts, minus its lowercasing step.
+     *
+     * @param mixed $key
+     * @return string
+     */
+    private static function sanitizeMetaKey($key)
+    {
+        $string = (string) $key;
+        $stripped = preg_replace('/[^A-Za-z0-9_\-]/', '', $string);
+        return is_string($stripped) ? $stripped : '';
     }
 }

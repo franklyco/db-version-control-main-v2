@@ -127,6 +127,18 @@ final class FieldCurationRecommender
         'google_map' => 'later',
         'oembed' => 'later',
         'file' => 'later',
+        // R5.later (Path B, 2026-09-03): Vertical's `vf_palette` custom ACF
+        // field type is a per-taxonomy-term color grid whose native ACF UI
+        // (rendered at Settings → Site Settings Advanced via the standard
+        // vf_palette input) already offers a full color-picker-per-term
+        // editor. Adding drawer support would duplicate the existing admin
+        // functionality without adding real workflow value; marking as
+        // permanently out-of-scope for the drawer per the R5.later Path B
+        // recommendation in `docs/dropins/dbvc-visual-editor-brand-controls-guide/releases/R5-REMAINING-UNLOCK-FRONTIERS.md`.
+        // The `never` sentinel flows through resolveStatus's default
+        // "unrecognized unlocks_at → unsupported" path unchanged; no
+        // provider-side code changes needed.
+        'vf_palette' => 'never',
     ];
 
     /**
@@ -347,6 +359,55 @@ final class FieldCurationRecommender
         $type = (string) $field_type;
 
         return isset(self::FAMILY_UNLOCK_MAP[$type]) ? self::FAMILY_UNLOCK_MAP[$type] : 'later';
+    }
+
+    /**
+     * R5.later-a.5 — derive a suggested `palette_group_key` for a candidate
+     * based on its ACF parent context. Heuristic:
+     *
+     *   - The field's `field_type` must be `color_picker`
+     *     (palette grouping is brand-color-only in MVP per R5.later-a's
+     *     Vertical provider `countPaletteMembers` gate).
+     *   - The immediate parent segment in `field_name_path` (2nd-to-last
+     *     when split on `>`) must contain the case-insensitive substring
+     *     `palette`. This picks up the Vertical Global Palette's
+     *     `brand_color_palette>vertical_global_palette>colorXxx` shape
+     *     automatically without a per-row curator toggle.
+     *
+     * When the heuristic fires, the returned value is
+     * `sanitize_key($parent_segment)` — the same slug shape the store's
+     * `palette_group_key` field enforces. Zero suggestion (empty string)
+     * for any candidate that fails the heuristic; the curator can always
+     * override by explicitly setting `palette_group_key` in the store
+     * (curator value wins in `CurationExporter::export`).
+     *
+     * @param array<string, mixed> $candidate
+     * @return string
+     */
+    public function deriveSuggestedPaletteGroupKey(array $candidate)
+    {
+        $field_type = isset($candidate['field_type']) ? (string) $candidate['field_type'] : '';
+        if ($field_type !== 'color_picker') {
+            return '';
+        }
+        $path = isset($candidate['field_name_path']) ? (string) $candidate['field_name_path'] : '';
+        if ($path === '' || strpos($path, '>') === false) {
+            return '';
+        }
+        $segments = explode('>', $path);
+        // Immediate parent = segment before the leaf (the leaf itself is
+        // the last segment).
+        $parent_segment = isset($segments[count($segments) - 2])
+            ? (string) $segments[count($segments) - 2]
+            : '';
+        if ($parent_segment === '') {
+            return '';
+        }
+        if (stripos($parent_segment, 'palette') === false) {
+            return '';
+        }
+
+        return sanitize_key($parent_segment);
     }
 
     /**

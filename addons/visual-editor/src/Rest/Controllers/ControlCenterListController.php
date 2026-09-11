@@ -161,7 +161,7 @@ final class ControlCenterListController
         return new WP_REST_Response(
             [
                 'ok' => true,
-                'viewModelVersion' => 2, // R4-A bumped from 1 (see release doc)
+                'viewModelVersion' => 3, // R5.7-b bumped from 2 — parentPublicId added to items[]
                 'query' => [
                     'category' => $category,
                     'status' => $status,

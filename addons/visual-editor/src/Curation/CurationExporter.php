@@ -100,6 +100,21 @@ final class CurationExporter
                 'group' => (string) ($decision['group'] ?? ''),
                 'client_priority' => (string) ($decision['client_priority'] ?? ''),
                 'notes' => (string) ($decision['notes'] ?? ''),
+                // R5.later-a — passthrough for Vertical's palette grouping;
+                // R5.later-a.5 extends this with a recommender fallback so
+                // color_picker records nested inside a group whose name
+                // contains "palette" auto-default to that group's slug
+                // without a per-row curator toggle. Curator override
+                // (non-empty decision value) always wins over the auto
+                // suggestion; empty decision + empty suggestion = flat.
+                'palette_group_key' => $this->resolvePaletteGroupKey($decision, $candidate),
+                // R5.later-a.6 — passthrough for the curator-set palette
+                // parent label override. Empty string when unset — the
+                // Vertical provider falls back to the humanised
+                // `palette_group_key` slug in that case. Set on any one
+                // child in the palette group; the provider's pre-scan
+                // picks the first non-empty value seen.
+                'palette_display_label' => (string) ($decision['palette_display_label'] ?? ''),
                 'unlocks_at' => $unlocks_at,
             ];
         }
@@ -169,6 +184,27 @@ final class CurationExporter
             'include_count' => count($records),
             'unlocks_summary' => $unlocks_summary,
         ];
+    }
+
+    /**
+     * R5.later-a.5 — resolve the exported `palette_group_key` for a record.
+     * Curator override (non-empty decision value) wins; otherwise fall
+     * back to the recommender's heuristic suggestion. See
+     * {@see FieldCurationRecommender::deriveSuggestedPaletteGroupKey} for
+     * the heuristic (color_picker inside a "palette"-named parent group).
+     *
+     * @param array<string, mixed> $decision
+     * @param array<string, mixed> $candidate
+     * @return string
+     */
+    private function resolvePaletteGroupKey(array $decision, array $candidate)
+    {
+        $explicit = isset($decision['palette_group_key']) ? (string) $decision['palette_group_key'] : '';
+        if ($explicit !== '') {
+            return $explicit;
+        }
+
+        return $this->recommender->deriveSuggestedPaletteGroupKey($candidate);
     }
 
     /**

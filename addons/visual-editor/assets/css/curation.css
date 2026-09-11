@@ -229,6 +229,55 @@
     box-sizing: border-box;
 }
 
+/* R5.later-a.3: palette_group_key input. Sanitize_key slug format — the
+ * server enforces [a-z0-9_-]{0,40}; the monospace + spellcheck=false +
+ * autocomplete=off make the slug shape read at a glance for curators. */
+.dbvc-ve-curation__row .dbvc-ve-curation__palette-key {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 11px;
+}
+
+/* R5.later-a.5: when the input is empty but the recommender suggests a
+ * slug (color_picker inside a "palette"-named group), the input's
+ * placeholder shows the suggested value and a small hint below reads
+ * "auto: {slug}" — tiny + muted so it reads as a soft default, not a
+ * hard curator commitment. Typing a real value replaces the hint on
+ * the next render (the .is-auto class only sticks when decision is
+ * empty AND suggestion exists). */
+.dbvc-ve-curation__row .dbvc-ve-curation__palette-key.is-auto {
+    background: rgba(255, 244, 214, 0.55);
+    border-style: dashed;
+}
+.dbvc-ve-curation__row .dbvc-ve-curation__palette-key-hint {
+    display: block;
+    margin-top: 2px;
+    font-size: 10px;
+    color: #666;
+    line-height: 1.2;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+/* R5.later-a.6: palette_display_label input sits directly under the
+ * palette_group_key input in the same cell. Not monospaced (curators
+ * type real words with spaces + casing), slightly narrower font-size
+ * than the group-key so the visual weight of the two inputs stays
+ * balanced. Placeholder shows the humanised default so a curator
+ * knows exactly what will render if they leave it blank. */
+.dbvc-ve-curation__row .dbvc-ve-curation__palette-label {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin-top: 3px;
+    font-size: 11px;
+}
+.dbvc-ve-curation__row .dbvc-ve-curation__palette-label::placeholder {
+    color: #888;
+    font-style: italic;
+}
+
 .dbvc-ve-curation__row textarea {
     font-size: 12px;
     resize: vertical;

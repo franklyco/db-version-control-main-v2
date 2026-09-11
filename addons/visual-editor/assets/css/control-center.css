@@ -400,6 +400,20 @@
   font-size: var(--dbvc-ve-font--body);
   font-weight: var(--dbvc-ve-font-weight--bold);
   color: var(--dbvc-ve-color-secondary);
+  /* R4-D-3 (defense-in-depth): pathological single-word ACF labels
+     (200+ chars without word boundaries) would otherwise force
+     horizontal overflow because .__label-block gives us space via
+     `min-width: 0` but nothing constrains the label's own layout
+     width. Every real ACF label seen in the R4-D-2 sample (n=157,
+     longest 42 chars) wraps cleanly at spaces via inherited
+     `white-space: normal`; these two rules only kick in for the
+     never-observed single-word exotic case. `overflow-wrap: anywhere`
+     preserves the label's full visible text (vs `text-overflow:
+     ellipsis` which would hide characters); `max-width: 100%` pins
+     the label to its flex-child slot so the container's overall
+     right-edge alignment never shifts. */
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .dbvc-ve-control-center__meta {
@@ -787,6 +801,26 @@
   color: var(--dbvc-ve-color-success);
 }
 
+/* R5.5: compact ISO date chip. Renders the label (ISO for MVP) in a
+   monospaced pill so YYYY-MM-DD reads cleanly at a glance. */
+.dbvc-ve-control-center__value-date {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  min-height: 20px;
+  border-radius: var(--dbvc-ve-border-radius--l);
+  background: color-mix(in srgb, var(--dbvc-ve-color-text-subtle) 18%, #ffffff);
+  color: var(--dbvc-ve-color-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--medium);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12ch;
+}
+
 /* R4-C-2: header segmented view-mode toggle. Two role="tab" buttons
    (By category / By provider) with `aria-selected` reflecting state. */
 .dbvc-ve-control-center__view-toggle {
@@ -1081,4 +1115,124 @@
 .dbvc-ve-control-center__footer strong {
   color: var(--dbvc-ve-color-secondary);
   font-weight: var(--dbvc-ve-font-weight--bold);
+}
+
+/* R5.7-b — inline tree render (repeater parents + per-row leaves).
+   Parent rows carry `.is-parent` + a leading disclosure triangle; child
+   rows carry `.is-child` and are indented so the tree structure reads
+   visually. Every family the drawer supports today is still a flat row;
+   the tree overlay only activates when providers emit `parentPublicId`
+   + `meta.role='repeater_parent'`. */
+.dbvc-ve-control-center__row.is-parent .dbvc-ve-control-center__row-cell--label {
+  padding-left: 8px;
+}
+.dbvc-ve-control-center__row.is-child .dbvc-ve-control-center__row-cell--label {
+  padding-left: 44px;
+  /* Faint vertical hairline connecting the parent's disclosure to the
+     child rows below. Positioned via a background gradient so no extra
+     DOM is needed. */
+  background: linear-gradient(
+      90deg,
+      var(--dbvc-ve-color-border-muted) 0 1.5px,
+      transparent 1.5px
+    )
+    24px 0 / 1.5px 100% no-repeat;
+}
+.dbvc-ve-control-center__row-disclosure {
+  appearance: none;
+  border: 1px solid var(--dbvc-ve-color-border-muted);
+  background: transparent;
+  color: var(--dbvc-ve-color-text-muted);
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-right: 8px;
+  padding: 0;
+  vertical-align: middle;
+  font-size: 10px;
+  line-height: 1;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+.dbvc-ve-control-center__row-disclosure:hover {
+  background: color-mix(in srgb, var(--dbvc-ve-color-primary) 8%, transparent);
+  border-color: var(--dbvc-ve-color-primary);
+  color: var(--dbvc-ve-color-primary);
+}
+.dbvc-ve-control-center__row-disclosure:focus-visible {
+  outline: 2px solid var(--dbvc-ve-color-primary);
+  outline-offset: 2px;
+}
+.dbvc-ve-control-center__row-disclosure-icon {
+  display: inline-block;
+  transform: rotate(0deg);
+  transform-origin: 50% 50%;
+  transition: transform 140ms ease;
+}
+.dbvc-ve-control-center__row-disclosure.is-expanded
+  .dbvc-ve-control-center__row-disclosure-icon {
+  transform: rotate(90deg);
+}
+.dbvc-ve-control-center__row-childcount {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(
+    in srgb,
+    var(--dbvc-ve-color-text-muted) 12%,
+    transparent
+  );
+  color: var(--dbvc-ve-color-text-muted);
+  font-size: var(--dbvc-ve-font--meta);
+  font-weight: var(--dbvc-ve-font-weight--medium);
+  white-space: nowrap;
+}
+
+/* R5.later-b (2026-09-05): Expand action button on palette parent rows.
+   Icon-only button (arrows expanding outward) sitting alongside the
+   Open button + child-count chip. Compact so it doesn't crowd the
+   action cell. */
+.dbvc-ve-control-center__row-expand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid var(--dbvc-ve-color-border, transparent);
+  background: transparent;
+  color: var(--dbvc-ve-color-text-muted);
+  border-radius: var(--dbvc-ve-border-radius--s, 4px);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.dbvc-ve-control-center__row-expand:hover {
+  color: var(--dbvc-ve-color-secondary);
+  border-color: var(--dbvc-ve-color-primary, currentColor);
+  background: rgba(0, 0, 0, 0.02);
+}
+.dbvc-ve-control-center__row-expand:focus-visible {
+  outline: 2px solid var(--dbvc-ve-color-focus-ring, currentColor);
+  outline-offset: 2px;
+}
+.dbvc-ve-control-center__row-expand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbvc-ve-control-center__row-disclosure,
+  .dbvc-ve-control-center__row-disclosure-icon {
+    transition: none;
+  }
 }

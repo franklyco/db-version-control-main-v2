@@ -180,6 +180,27 @@ final class SharedGlobalsDescriptorFactory
             );
         }
 
+        // R5.5: AcfDatePickerResolver — ACF date_picker field. Panel
+        // renders via `createInputController('date', value)` which
+        // produces a native `<input type="date">` — zero new panel
+        // controller code, mirroring R5.2+color_picker's approach.
+        // Group-nesting inherits from R5.1-b's `walkGroupChain`.
+        if ($field_type === 'date_picker') {
+            return $this->buildSharedFieldDescriptor(
+                $session_id,
+                $page_context,
+                $field,
+                $field_name,
+                $field_key,
+                $field_type,
+                [
+                    'resolver' => 'acf_date_picker',
+                    'input' => 'date',
+                    'source_context' => 'toolbar_shared_global_option_date',
+                ]
+            );
+        }
+
         $field_label = isset($field['label']) && is_scalar($field['label'])
             ? sanitize_text_field((string) $field['label'])
             : $field_name;
@@ -467,6 +488,334 @@ final class SharedGlobalsDescriptorFactory
                 'reloadAfterSave' => true,
             ]
         );
+    }
+
+    /**
+     * R5.7-a — Mint an editable descriptor for a leaf subfield inside a
+     * specific row of an ACF repeater field. The write path routes
+     * through {@see \Dbvc\VisualEditor\Resolvers\AbstractAcfResolver::writeRepeaterSubfieldValue}
+     * (dispatched from `writeAcfValue` via `isRepeaterSubfieldSource`
+     * for scalars or `isRepeaterCollectionSource` for reference
+     * collections), which lifts the parent repeater's rows, verifies
+     * `expected_row_signature`, writes the leaf subfield in the target
+     * row, and persists the whole rows array back via
+     * `update_field($parent_field_key, $rows, 'option')`.
+     *
+     * Called directly by external providers (Vertical) after they lift
+     * the parent repeater's rows and identify the target row_index +
+     * subfield they want to edit. The DBVC `build()` entry point does
+     * NOT call this method — repeater subfields are surfaced only
+     * through the Vertical provider's `getControls()` unroll pass.
+     *
+     * The descriptor's source shape mirrors R3-C-1's reference-collection
+     * shape for reference leaves (`source.type='acf_collection_field'` +
+     * `render.context='query_collection'` so
+     * `AcfReferenceCollectionResolver::supports()` matches), and
+     * `source.type='acf_repeater_subfield'` for scalar leaves (so
+     * `AbstractAcfResolver::isRepeaterSubfieldSource()` matches). In
+     * both cases `container_type='repeater'` and the resolver's
+     * `writeAcfValue()` dispatches to `writeRepeaterSubfieldValue()`.
+     *
+     * Parent field identifiers cascade for read/write correctness when
+     * the repeater is itself nested inside an ACF Group (like
+     * `settings_nav_menus > menus`): `parent_field_selector` uses the
+     * repeater's KEY so ACF's key-based lookup handles the group
+     * prefix; `parent_field_name` + `parent_field_key` provide the
+     * write path's `update_field` fallback chain.
+     *
+     * @param string               $session_id
+     * @param array<string, mixed> $page_context
+     * @param array<string, mixed> $parent_repeater_field ACF field-object
+     *                             array for the repeater itself
+     *                             (`get_field_object($repeater_key, 'option', false, false)`).
+     * @param array<string, mixed> $subfield_field        ACF field-object
+     *                             array for the leaf subfield being
+     *                             edited (`acf_get_field($subfield_key)`).
+     * @param int                  $row_index             Positional row index
+     *                             (0-indexed).
+     * @param string               $expected_row_signature Precomputed sha1
+     *                             hash of the row's data at descriptor-mint
+     *                             time; re-verified by the resolver at save
+     *                             time — mismatch rejects the write.
+     * @param string               $row_key               Reserved for future
+     *                             (raw-meta row-key lookup); MVP passes ''.
+     * @return EditableDescriptor|null Null when the subfield's family
+     *                                 isn't in the R5.x supported list, or
+     *                                 when identifiers are missing.
+     */
+    public function buildRepeaterSubfieldDescriptor(
+        $session_id,
+        array $page_context,
+        array $parent_repeater_field,
+        array $subfield_field,
+        $row_index,
+        $expected_row_signature,
+        $row_key = ''
+    ) {
+        $parent_field_name = sanitize_key((string) ($parent_repeater_field['name'] ?? ''));
+        $parent_field_key = sanitize_key((string) ($parent_repeater_field['key'] ?? ''));
+        $field_name = sanitize_key((string) ($subfield_field['name'] ?? ''));
+        $field_key = sanitize_key((string) ($subfield_field['key'] ?? ''));
+        $field_type = sanitize_key((string) ($subfield_field['type'] ?? ''));
+
+        if ($parent_field_name === '' || $parent_field_key === ''
+            || $field_name === '' || $field_key === '' || $field_type === '') {
+            return null;
+        }
+
+        $config = $this->resolveRepeaterLeafFamilyConfig($field_type, $subfield_field);
+        if ($config === null) {
+            return null;
+        }
+
+        $row_index = absint($row_index);
+        $row_key = sanitize_key((string) $row_key);
+        $expected_row_signature = is_string($expected_row_signature)
+            && preg_match('/^[a-f0-9]{40}$/', (string) $expected_row_signature) === 1
+            ? (string) $expected_row_signature
+            : '';
+
+        $field_group = $this->resolveFieldGroupContext($parent_repeater_field);
+        $option_page_slug = ! empty($field_group['option_pages']) ? (string) reset($field_group['option_pages']) : '';
+        $option_page_label = $this->resolveOptionPageLabel($option_page_slug);
+
+        $token = $this->createToolbarToken(
+            $session_id,
+            $parent_field_name . '::row_' . $row_index . '::' . $field_name,
+            $field_key
+        );
+
+        $source = [
+            // Reference leaves route through AcfReferenceCollectionResolver
+            // which requires source.type=acf_collection_field + render.context=query_collection.
+            // Scalar leaves route through AcfTextResolver / etc. which
+            // accept source.type=acf_repeater_subfield via supportsAcfSource.
+            'type' => $config['is_reference'] ? 'acf_collection_field' : 'acf_repeater_subfield',
+            'container_type' => 'repeater',
+            'source_context' => $config['source_context'],
+            // Parent-selector prefers the repeater's KEY so ACF's key-based
+            // lookup handles a repeater that's itself group-nested (like
+            // settings_nav_menus > menus). Name + key are also carried for
+            // the write path's cascading update_field fallback.
+            'parent_field_selector' => $parent_field_key,
+            'parent_field_name' => $parent_field_name,
+            'parent_field_key' => $parent_field_key,
+            'row_index' => $row_index,
+            'row_key' => $row_key !== '' ? $row_key : null,
+            'expected_row_signature' => $expected_row_signature,
+            'field_name' => $field_name,
+            'field_selector' => $field_name,
+            'field_selector_raw' => $field_name,
+            'field_key' => $field_key,
+            'leaf_field_name' => $field_name,
+            'leaf_field_key' => $field_key,
+            'field_type' => $field_type,
+            'field_group_key' => isset($field_group['key']) ? sanitize_key((string) $field_group['key']) : '',
+            'field_group_title' => isset($field_group['title']) ? sanitize_text_field((string) $field_group['title']) : '',
+            'field_group_option_pages' => isset($field_group['option_pages']) && is_array($field_group['option_pages']) ? $field_group['option_pages'] : [],
+        ];
+
+        if ($config['is_reference']) {
+            $post_types = $this->filterPostTypes($this->normalizePostTypes(isset($subfield_field['post_type']) ? $subfield_field['post_type'] : []));
+            if (empty($post_types)) {
+                $post_types = $this->getDefaultReferencePostTypes();
+            }
+            $is_multiple = $field_type === 'relationship' || ! empty($subfield_field['multiple']);
+            $source['reference_post_types'] = $post_types;
+            $source['reference_multiple'] = $is_multiple;
+            $source['reference_min'] = $this->resolveReferenceMin($subfield_field);
+            $source['reference_max'] = $this->resolveReferenceMax($subfield_field, $is_multiple);
+            $source['query_collection_write_mode'] = 'replace_full_collection';
+            $source['query_result_ids'] = [];
+            $source['query_full_value_ids'] = [];
+            $source['query_preserved_ids'] = [];
+            $source['query_result_empty'] = true;
+        }
+
+        $entity = [
+            'type' => 'option',
+            'id' => 0,
+            'subtype' => 'acf_options',
+            'acf_object_id' => 'option',
+            'option_page_slug' => $option_page_slug,
+            'option_page_label' => $option_page_label,
+        ];
+
+        $render_context = $config['is_reference'] ? 'query_collection' : 'field';
+        $render = [
+            'context' => $render_context,
+            'attribute' => 'toolbar_shared_global',
+            'element_id' => 'toolbar-shared-global-' . $parent_field_name . '-row-' . $row_index . '-' . $field_name,
+            'display_key' => 'default',
+            'sync_group' => 'option:' . $parent_field_name . ':row_' . $row_index . ':' . $field_name,
+            'source_group' => 'option:' . $parent_field_name . ':row_' . $row_index . ':' . $field_name,
+        ];
+
+        $field_label = isset($subfield_field['label']) && is_scalar($subfield_field['label'])
+            ? sanitize_text_field((string) $subfield_field['label'])
+            : $field_name;
+
+        $ui = array_merge(
+            [
+                'label' => $field_label,
+                'badgeLabel' => __('Shared Global', 'dbvc'),
+                'input' => $config['input'],
+            ],
+            ! empty($config['ui_options']) ? ['options' => $config['ui_options']] : []
+        );
+
+        return new EditableDescriptor(
+            $token,
+            'editable',
+            'shared_entity',
+            $entity,
+            $render,
+            $source,
+            $ui,
+            ['name' => $config['resolver']],
+            $page_context,
+            [
+                'type' => 'option',
+                'id' => 0,
+                'subtype' => 'acf_options',
+                'scope' => 'shared_entity',
+                'isCurrentPageEntity' => false,
+                'isLoopOwned' => false,
+                'pageEntityId' => isset($page_context['entityId']) ? absint($page_context['entityId']) : 0,
+            ],
+            [],
+            [
+                'fieldName' => $field_name,
+                'fieldKey' => $field_key,
+                'rootFieldName' => $parent_field_name,
+                'rootFieldKey' => $parent_field_key,
+            ],
+            [
+                'version' => 1,
+                'kind' => $config['kind'],
+                'target' => 'field',
+                'contract' => $config['contract'],
+                'renderContext' => $render_context,
+                'reloadAfterSave' => true,
+            ]
+        );
+    }
+
+    /**
+     * R5.7-a — Per-family config bag for repeater-subfield descriptors.
+     * Mirrors the family dispatch in {@see build()} but tailored for
+     * leaves inside a repeater row (source_context includes
+     * `repeater_subfield_*`, and reference families set
+     * `is_reference => true` to trigger the collection-shape source
+     * assembly). Returns null when the leaf's field_type isn't in the
+     * R5.x supported list.
+     *
+     * @param string               $field_type
+     * @param array<string, mixed> $subfield_field ACF field-object array.
+     * @return array<string, mixed>|null
+     */
+    private function resolveRepeaterLeafFamilyConfig($field_type, array $subfield_field)
+    {
+        if (in_array($field_type, ['text', 'textarea', 'url', 'email', 'number'], true)) {
+            return [
+                'resolver' => 'acf_text',
+                'input' => $field_type === 'textarea' ? 'textarea' : 'text',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_text',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if (in_array($field_type, ['select', 'checkbox', 'radio', 'button_group'], true)) {
+            return [
+                'resolver' => 'acf_choice',
+                'input' => $field_type === 'checkbox' ? 'checkbox_group' : 'select',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_choice',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => $this->projectAcfChoices($subfield_field),
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'link') {
+            return [
+                'resolver' => 'acf_link',
+                'input' => 'link',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_link',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'wysiwyg') {
+            return [
+                'resolver' => 'acf_wysiwyg',
+                'input' => 'richtext',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_wysiwyg',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'image') {
+            return [
+                'resolver' => 'acf_image',
+                'input' => 'media_reference',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_image',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'color_picker') {
+            return [
+                'resolver' => 'acf_color_picker',
+                'input' => 'color',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_color',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'true_false') {
+            return [
+                'resolver' => 'acf_true_false',
+                'input' => 'true_false',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_boolean',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if ($field_type === 'date_picker') {
+            return [
+                'resolver' => 'acf_date_picker',
+                'input' => 'date',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_date',
+                'contract' => 'shared_field',
+                'kind' => 'scalar',
+                'ui_options' => [],
+                'is_reference' => false,
+            ];
+        }
+        if (in_array($field_type, ['relationship', 'post_object'], true)) {
+            return [
+                'resolver' => 'acf_reference_collection',
+                'input' => 'reference_collection',
+                'source_context' => 'toolbar_shared_global_option_repeater_subfield_reference',
+                'contract' => $field_type === 'relationship' ? 'shared_relationship_collection' : 'shared_post_object_collection',
+                'kind' => 'collection',
+                'ui_options' => [],
+                'is_reference' => true,
+            ];
+        }
+        return null;
     }
 
     /**
